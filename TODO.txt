@@ -1,0 +1,1047 @@
+Could you do me a research? I have a minimetroopen street maps PoC for graph databases. Now I would like to modify this project to run as a static page on github pages, even without the graph database. It should be highly stylized map of prague metro/tram system showing real world data. Is this possible to build as of now? Could you find me the api's to track and visualize the cars positions and delays on a static github pages page?
+
+I’m checking two things in parallel: whether Prague’s transit data is available in a browser-friendly way today, and whether GitHub Pages can host the whole thing without a backend. I’ll focus on official or primary sources and call out any blockers like CORS, API keys, or licensing.
+
+There is definitely official Prague transit data for both static timetables and live positions/delays. The main unknown now is not data existence, but how exposed it is to a browser-only app—especially whether the live endpoints allow direct client-side calls and under what authentication model.
+
+Yes — this is buildable now, and you do not need a graph database for the map viewer itself. GitHub Pages will happily host a static HTML/CSS/JS app, and PID officially publishes both a daily GTFS schedule feed and real-time vehicle positions plus delays through GTFS Realtime and the Golemio API. PID’s own public site also advertises a live web map covering metro, trams, trolleybuses, buses, trains, and ferries, so the data pipeline plainly exists today.
+
+The clean design is this: keep the display as a schematic map, meaning diagram-like rather than geographically exact, and precompute the geometry, meaning calculate it ahead of time during build. PID’s GTFS docs say shape_dist_traveled in stop_times.txt has a counterpart in shapes.txt, and public Golemio examples show live vehicle payloads carrying trip.gtfs.trip_id, shape_dist_traveled, and delay fields. That is enough to map a real vehicle onto a hand-stylized metro/tram line without any routing engine behind it.
+
+The APIs worth targeting are:
+
+    Static network truth: data.pid.cz/PID_GTFS.zip for routes, trips, stops, and shapes; PID says it is updated daily, and Golemio also advertises a “Public GTFS Static Lookup (v2)” API.
+
+    Live vehicle positions in JSON/GeoJSON: Golemio documents “Public Vehicle Positions (v2)” as realtime positions of vehicles in custom GeoJSON, and public examples use https://api.golemio.cz/v2/vehiclepositions.
+
+    Live GTFS-RT feed: Golemio documents “GTFS Realtime (v2)” protobuf feeds and says they are updated every 20 seconds.
+
+    Stop-centric delays and departures: the current docs advertise “PID Departure Boards (v4)”, which is useful if you want stop popups or platform countdown panels in addition to moving vehicles.
+
+The main constraint for a pure GitHub Pages deployment is authentication, not rendering. Golemio’s public API access is secured with a JWT/generated API key after free registration, so any key you put into browser JavaScript is effectively public. I could not verify CORS behavior from the docs alone, so that needs an early browser test. If direct browser access fails, the static-friendly fallback is to keep the site on Pages but fetch/cache data with GitHub Actions; GitHub documents that scheduled workflows can run as often as every 5 minutes, which is fine for snapshots but not for true “live” 20-second tracking.
+
+For the front end, MapLibre GL JS is a strong fit because it renders interactive maps in the browser with WebGL. PMTiles can also be read directly in the browser with MapLibre, but PMTiles depends on HTTP Range Requests, and I found recent community reports of GitHub Pages serving problematic range responses for that pattern in some browsers. GitHub Pages also has a published 1 GB site-size limit. So for a production-quality Pages deployment, I would avoid hosting a large PMTiles archive on Pages itself; a lighter SVG/GeoJSON schematic is safer.
+
+My verdict: yes, feasible today. The most robust version is a static GitHub Pages app that builds a slim Prague metro/tram network from PID GTFS, stores your own stylized line geometry, and overlays live Golemio vehicle data by matching trip_id and progress along the route. The only serious uncertainty is whether Golemio’s live endpoints will permit your exact browser-origin + exposed-key setup; if not, you still keep the project “mostly static” by adding only a tiny proxy or scheduled snapshot job.
+
+One last legal note: PID says data downloaded directly from its site is CC-BY, while linked external sources follow their own licenses; if you use an OSM-derived basemap such as Protomaps, OSM attribution is also required.
+
+A practical next step is a concrete repo layout: build script, data pipeline, and the exact fetch/render flow for the schematic vehicle animation.
+
+Maybe we could host this on a vercel entirely, or just for the creds proxy. Could you now guide me with the access request and accounts creations?
+
+I’m checking the current signup and access flow so I can give you an exact sequence rather than a guess. I’ll stick to the official Golemio/PID and Vercel docs and note where a browser-only app is still risky.
+
+I’ve confirmed the important part: Golemio still has a free registration flow and key generation, and Vercel is perfectly suited for a tiny proxy that keeps that key off the client. I’m now tightening the exact setup order so you can move through signup, key issuance, and first deployment without dead ends.
+
+The remaining practical point is the deployment shape. For your case I’d choose one of only two clean paths: either one Vercel project for both the static app and the proxy, or GitHub Pages for the app plus one tiny Vercel proxy project. Everything else adds friction without giving you much back.
+
+Yes. For this project, Vercel is the better fit than pure GitHub Pages if you want live Prague transit data without exposing credentials. Golemio’s public API uses a generated API key/JWT, and their docs say you register for free at the API-keys page, verify your email, then generate the key for API access. They also document that the token is sent in the X-Access-Token header.
+
+The good news is that you do not need any special approval flow from PID just to start prototyping. PID’s open-data page says their GTFS timetable feed is published daily, and live vehicle positions plus delays are available online through either GTFS Realtime or the Golemio API JSON. They also explicitly invite people needing systematic use or support to contact their open-data address.
+
+I would set this up in this order:
+1) Golemio account and API key
+
+Go to the Golemio API key page and register. The official Golemio documentation says registration is free, requires email verification, and then lets you generate an API key. Their public transport API docs are the place to inspect the transit endpoints afterward.
+
+What to do there:
+
+    Create the account.
+
+    Verify the email.
+
+    Generate one API key for development.
+
+    Save it somewhere safe; you will put it into Vercel, not into browser code.
+
+    Open the public transport docs and look specifically for:
+
+        vehicle positions
+
+        GTFS Realtime
+
+        departure boards
+
+For your use case, the likely minimum dataset mix is:
+
+    PID GTFS static for routes, stops, shapes, trips
+
+    Golemio realtime for vehicle positions and delays
+
+2) Vercel account
+
+Sign up for Vercel with GitHub rather than email. Vercel’s account docs say you can sign up either with email or a Git provider, but using a Git provider is the natural path when you want to import a repo and deploy from Git. Vercel also states that when importing an existing project, you connect a Git provider, pick the repository, optionally configure settings, and deploy.
+
+The path is:
+
+    Sign in to Vercel with GitHub.
+
+    Authorize the Vercel GitHub integration.
+
+    Import your repo from the “New Project” flow.
+
+    Let Vercel auto-detect the framework, or choose “Other” if it is a plain static/Vite app.
+
+One small gotcha: Vercel’s limits docs say a Hobby team cannot connect to Git repositories owned by Git organizations. If your repo lives in a personal GitHub account, that is fine. If it lives under a GitHub organization, you may need a different Vercel team setup.
+3) Put the Golemio key into Vercel
+
+Vercel’s environment-variable docs say project-level environment variables are configured in Project Settings → Environment Variables, are encrypted at rest, and require a redeploy before changes apply to deployments.
+
+Create something like:
+
+GOLEMIO_API_KEY=...
+
+Then redeploy. Do not prefix it with NEXT_PUBLIC_ or any other client-exposed prefix, because that would leak it to the browser. Vercel’s framework-env docs explain that prefixed variables are exposed client-side in many frameworks.
+4) Choose one of these deployment shapes
+Best option: everything on Vercel
+
+Use one Vercel project containing:
+
+    your static front end
+
+    a tiny serverless proxy under /api/...
+
+This is the simplest operationally. Vercel Functions are explicitly meant for server-side code that handles API calls and other I/O-bound work.
+
+The proxy endpoints might be:
+
+    /api/vehicle-positions
+
+    /api/trip-updates
+
+    /api/departures?stopId=...
+
+Each one:
+
+    reads GOLEMIO_API_KEY from env
+
+    calls Golemio with X-Access-Token
+
+    returns sanitized JSON to the browser
+
+Also valid: GitHub Pages front end + Vercel proxy
+
+Keep the stylized map as a static GitHub Pages site, and deploy a separate Vercel project that only serves /api/.... That works too, but you will need to set CORS headers on the Vercel proxy so your GitHub Pages domain can call it.
+
+I would only choose this split if you strongly want to keep the front end on Pages for repo/demo reasons. Architecturally, it is slightly more fiddly than a single Vercel project.
+5) What needs no account
+
+You likely do not need a separate PID account for the static feed. PID’s open-data page presents GTFS timetable data as downloadable open data, updated daily, and documents the dataset structure.
+
+That means:
+
+    build-time preprocessing of Prague metro/tram topology can come from PID GTFS
+
+    runtime live movement can come from Golemio
+
+6) What I would request or configure first
+
+Your shortest path is:
+
+    Create or use your existing GitHub repo.
+
+    Sign into Vercel with GitHub and import that repo.
+
+    Register at Golemio API keys, verify email, generate key.
+
+    Add GOLEMIO_API_KEY in Vercel project settings and redeploy.
+
+    Implement one proxy endpoint first: vehicle positions.
+
+    Add GTFS static preprocessing second.
+
+    Add departures/delay panels third.
+
+7) What to ask Golemio/PID if something blocks you
+
+If you hit ambiguity around endpoint scope, quotas, or browser usage, send a short support note. PID’s open-data page gives opendata@pid.cz for systematic use/support.
+
+A good message is:
+
+    Hello, I am building a non-commercial Prague transit visualization prototype. I plan to use PID GTFS static data and Golemio realtime vehicle positions/delays in a stylized web map. Could you confirm the recommended public endpoints for vehicle positions, trip updates, and stop departures, and whether there are any usage limits or browser-access restrictions I should account for?
+
+My recommendation: deploy the whole thing on Vercel, not Pages + proxy. One repo, one domain, one deployment flow, and your secret stays server-side.
+
+I can map this into a concrete setup checklist for your repo next: folder structure, Vercel proxy routes, and the exact first endpoints to implement.
+
+Ok I have the golemio API and github and vercel accounts. Could you now give me a complete project plan how to develop this as a static vite typescript page builded by github actions. No code yet, just the detailed to-do list.
+
+I’m turning this into an implementation plan with the final architecture pinned down first, because that determines everything else: build, deploy, caching, and how the realtime layer is allowed to work. Then I’ll break it into milestones and a task list you can execute repo-first.
+
+I’ve pinned down the cleanest split: GitHub Actions builds and deploys the static Vite app to Pages, while Vercel holds only the secret-bearing proxy. The biggest design choice now is not tooling, but how much of the Prague network you precompute into your own schematic geometry versus drawing directly from GTFS shapes.
+
+Yes. I’d build this as two deployables:
+
+    Static frontend: a Vite + TypeScript app deployed to GitHub Pages by a custom GitHub Actions workflow. Vite’s production build goes to dist by default, and both Vite and GitHub document the GitHub Pages flow: set the correct base, select GitHub Actions in Pages settings, then build and deploy the dist artifact with the Pages actions. GitHub also notes that Pages sites are publicly reachable, so no secrets belong in the frontend repo or build output.
+
+    Secret-bearing proxy: a tiny Vercel Functions project that holds the Golemio API key in environment variables and exposes only a few safe endpoints to the browser. Vercel documents that environment variables are encrypted at rest and available during function execution, and that TypeScript functions under /api are deployed automatically with the Node.js runtime.
+
+For data, use PID GTFS static for the network model and Golemio/PID realtime for vehicle positions, delays, and departures. PID’s open-data page says the GTFS feed is generated daily, realtime positions/delays are available online via GTFS Realtime or Golemio JSON, and shape_dist_traveled has a matching entry in shapes.txt, which is exactly what you need to place moving vehicles along precomputed route geometry.
+Recommended structure
+
+Use two repos for v1:
+
+    prague-transit-map — GitHub Pages frontend
+
+    prague-transit-proxy — Vercel proxy
+
+That keeps deployment, secrets, and failure modes clean. You can merge to a monorepo later.
+Complete project plan
+Phase 0 — Freeze the product definition
+
+    Write a one-page product brief.
+
+    Lock the scope for v1:
+
+        Prague metro + tram only
+
+        stylized, schematic map
+
+        live vehicle dots
+
+        delay coloring
+
+        stop or station details on click
+
+        no journey planner
+
+        no full PID multimodal support yet
+
+    Define the exact visual style:
+
+        dark or light theme
+
+        degree of geographic distortion
+
+        line thickness rules
+
+        vehicle marker style
+
+        delay palette
+
+        typography and icon set
+
+    Define your acceptance criteria:
+
+        map loads fast
+
+        works on desktop first
+
+        graceful mobile fallback
+
+        no secret exposed in browser
+
+        live data failures do not break the page
+
+Phase 1 — Repository and delivery foundations
+Frontend repo
+
+    Create the frontend repository.
+
+    Add branch protection on main.
+
+    Decide the Pages URL shape:
+
+        user/org root site
+
+        or repo subpath site
+
+    Record the final public URL because it affects Vite base.
+
+    Enable GitHub Pages and choose GitHub Actions as the publishing source. GitHub’s Pages docs recommend the Actions path when you have a build step, and Vite explicitly documents the Pages workflow and base handling for root vs /<REPO>/ deployments.
+
+Proxy repo
+
+    Create the Vercel proxy repository.
+
+    Import it into Vercel.
+
+    Add environments:
+
+        Development
+
+        Preview
+
+        Production
+
+    Add GOLEMIO_API_KEY as a Vercel environment variable.
+
+    Decide the production proxy domain:
+
+        Vercel default domain is enough for v1
+
+        custom subdomain later if needed
+
+    Write down allowed frontend origins for CORS.
+
+Shared project hygiene
+
+    Add issue templates:
+
+        bug
+
+        feature
+
+        data anomaly
+
+    Add labels:
+
+        frontend
+
+        data-pipeline
+
+        realtime
+
+        proxy
+
+        map-style
+
+    Create a docs/ folder in the frontend repo for architecture notes.
+
+Phase 2 — Frontend scaffolding
+
+    Initialize the frontend as Vite + TypeScript.
+
+    Set up the minimal app shell:
+
+        app layout
+
+        loading state
+
+        error boundary
+
+        empty map placeholder
+
+        footer attribution block
+
+    Add tooling:
+
+        ESLint
+
+        Prettier
+
+        strict TypeScript
+
+        path aliases
+
+    Decide rendering strategy.
+
+Recommended rendering strategy
+
+For a highly stylized schematic map, use:
+
+    SVG for the network and station graph
+
+    lightweight DOM/CSS animation for vehicle markers
+
+    optional Canvas layer later only if marker counts get large
+
+Reason: SVG is much better than a geographic map library for crisp line design, labels, interchange symbols, and precise artistic control.
+Frontend module plan
+
+Create these logical modules:
+
+    core/ — app bootstrap, config, error handling
+
+    data/ — fetchers, parsers, runtime stores
+
+    map/ — line rendering, stations, labels, vehicles
+
+    ui/ — panels, legends, toggles, popovers
+
+    styles/ — design tokens and theming
+
+    types/ — shared domain types
+
+    assets/ — static icons and optional background shapes
+
+Phase 3 — Data model design
+
+Design the internal data contracts before writing any visualization.
+Static domain model
+
+Define entities for:
+
+    line
+
+    route variant
+
+    direction
+
+    station
+
+    stop
+
+    interchange
+
+    segment
+
+    shape polyline
+
+    stylized node
+
+    stylized edge
+
+    label anchor
+
+Realtime domain model
+
+Define entities for:
+
+    vehicle
+
+    trip
+
+    service state
+
+    delay status
+
+    position sample
+
+    freshness timestamp
+
+    proxy fetch status
+
+Mapping rules
+
+Document how these are linked:
+
+    GTFS route_id → internal line
+
+    GTFS trip_id → runtime vehicle trip
+
+    stop → station grouping
+
+    shape polyline → stylized edge chain
+
+    realtime vehicle → schematic position
+
+This is the most important design step in the whole project.
+Phase 4 — Static GTFS ingestion pipeline
+
+Build a separate data-prep pipeline inside the frontend repo. It should run locally and in GitHub Actions, but it should be conceptually independent from the runtime UI.
+Inputs
+
+    PID GTFS archive
+
+    optional manually curated overrides file
+
+    optional Prague boundary or district reference data for context layers
+
+Pipeline tasks
+
+    download or load the GTFS archive
+
+    unzip it
+
+    parse the needed files:
+
+        routes.txt
+
+        trips.txt
+
+        stop_times.txt
+
+        stops.txt
+
+        shapes.txt
+
+        optionally transfers.txt
+
+    filter only:
+
+        metro
+
+        tram
+
+    normalize stop naming and direction handling
+
+    collapse duplicate or virtual stop records where needed
+
+    group platform-level stops into station-level objects for UI
+
+    generate a simplified internal network graph
+
+    generate route variant metadata
+
+    generate line color and branding metadata
+
+    export compact JSON artifacts for the frontend
+
+Critical transformation tasks
+
+    identify the canonical route variants you actually want to render
+
+    separate passenger routes from edge cases you do not want in v1
+
+    detect depot and irregular tram movements and exclude or flag them
+
+    compute stop order per variant
+
+    compute station-to-station segment boundaries
+
+    store a stable mapping from trip/route data to schematic segments
+
+Because PID guarantees that shape_dist_traveled aligns with entries in shapes.txt, you can build precise segment boundaries once and reuse them for vehicle projection later.
+Phase 5 — Schematic map authoring
+
+This is where the project becomes a design product rather than a transport dashboard.
+Choose your schematic strategy
+
+Use a hybrid model:
+
+    start from real GTFS topology
+
+    manually author the final visual geometry
+
+That means:
+
+    data truth comes from GTFS
+
+    visual truth comes from your own hand-shaped line layout
+
+Authoring tasks
+
+    create a schematic coordinate system independent of lat/lon
+
+    define control points for each metro line
+
+    define control points for each tram trunk corridor
+
+    define station anchor points
+
+    define interchange symbols
+
+    define label anchors
+
+    define z-index rules:
+
+        lines
+
+        stations
+
+        vehicles
+
+        labels
+
+        popups
+
+Deliverables
+
+Produce versioned JSON files such as:
+
+    network.static.json
+
+    schematic.geometry.json
+
+    station-index.json
+
+    line-style.json
+
+Visual design tasks
+
+    choose corner radii
+
+    standardize line bends
+
+    standardize station spacing
+
+    standardize icon sizes
+
+    create a delay legend
+
+    create vehicle glyphs for metro vs tram
+
+    design reduced-motion mode
+
+Phase 6 — Realtime proxy design on Vercel
+
+Keep the proxy tiny and read-only.
+Endpoints for v1
+
+Expose only:
+
+    /api/vehicle-positions
+
+    /api/trip-updates or equivalent delay feed
+
+    /api/departures?stopId=...
+
+    /api/health
+
+Do not create a generic passthrough proxy.
+Proxy responsibilities
+
+    attach the Golemio access token server-side
+
+    request only the specific upstream datasets you need
+
+    normalize upstream responses into your frontend shape
+
+    strip fields you do not use
+
+    add cache headers
+
+    add request timeout handling
+
+    add upstream error translation
+
+    add CORS allowlist for your Pages domain
+
+    add freshness timestamps in every response
+
+Proxy safety rules
+
+    never forward the raw key
+
+    never proxy arbitrary URLs
+
+    rate-limit by simple heuristics if traffic grows
+
+    log upstream failures and slow requests
+
+    return partial data instead of hard failure where possible
+
+Environment setup
+
+Maintain separate Vercel env variables for:
+
+    production key
+
+    preview key
+
+    optional origin allowlist
+
+    optional upstream base URL overrides
+
+Vercel’s docs support this model directly: env vars are project-level or team-level, apply per environment, and are read during function execution.
+Phase 7 — Runtime data flow in the frontend
+
+Design the browser fetch layer around resilience.
+Fetch strategy
+
+    fetch static JSON assets from Pages on app start
+
+    fetch realtime proxy data on an interval
+
+    use stale-last-good data when a refresh fails
+
+    surface freshness to the user
+
+Polling plan
+
+Use separate refresh cadences:
+
+    vehicle positions: fastest
+
+    trip updates/delays: moderate
+
+    departures panel: on-demand or slower cadence
+
+Store design
+
+Create separate stores for:
+
+    static network
+
+    schematic geometry
+
+    vehicles
+
+    delays
+
+    selected station
+
+    selected line
+
+    app settings
+
+Runtime reconciliation
+
+At each refresh:
+
+    match incoming vehicles to trips
+
+    map trip to static route variant
+
+    map route variant to schematic geometry
+
+    compute vehicle progress along the stylized polyline
+
+    apply delay state to marker and line segment styling
+
+    expire stale vehicles cleanly
+
+Phase 8 — Vehicle projection and delay visualization
+
+This is the core algorithmic milestone.
+Projection tasks
+
+    map each realtime vehicle to its trip
+
+    determine direction and variant
+
+    locate nearest valid segment or progress position
+
+    interpolate onto your stylized line
+
+    smooth motion between polling intervals
+
+    avoid jumping backward on noisy updates
+
+Delay tasks
+
+Define clear delay buckets, for example:
+
+    on time
+
+    minor delay
+
+    moderate delay
+
+    severe delay
+
+    unknown
+
+Then apply them consistently to:
+
+    vehicle marker color or ring
+
+    selected line summary
+
+    station departure rows
+
+    optional status banner
+
+Edge cases to handle
+
+    missing trip mapping
+
+    short-turn services
+
+    depot runs
+
+    vehicle appears before full trip resolution
+
+    stale positions
+
+    duplicate vehicles
+
+    diverging tram route variants sharing early segments
+
+Phase 9 — User interface plan
+Core views
+
+    full schematic map
+
+    line filter
+
+    layer toggles
+
+    search box
+
+    station detail drawer
+
+    vehicle detail tooltip
+
+    status/legend panel
+
+Essential interactions
+
+    click station → show upcoming departures
+
+    click line → isolate and highlight line
+
+    hover vehicle → show line, destination, delay
+
+    search stop/station → focus and highlight
+
+    toggle metro-only / tram-only
+
+Accessibility tasks
+
+    keyboard navigation
+
+    focus outlines
+
+    ARIA for controls
+
+    color contrast checks
+
+    non-color delay indication
+
+    reduced-motion mode
+
+Attribution tasks
+
+Add visible credits for:
+
+    PID / Golemio data
+
+    OSM, only if any OSM-derived layer is used
+
+    your own map styling attribution
+    PID states that downloadable data on its site is CC-BY, so attribution should be treated as a first-class requirement.
+
+Phase 10 — GitHub Actions workflow plan
+
+Create three workflows in the frontend repo.
+1) CI workflow
+
+Trigger on pull requests and pushes.
+Tasks:
+
+    install dependencies
+
+    typecheck
+
+    lint
+
+    run unit tests
+
+    validate static data artifacts
+
+    fail on oversized bundles if needed
+
+2) Build-and-deploy Pages workflow
+
+Trigger on main pushes and manual dispatch.
+Tasks:
+
+    checkout
+
+    setup Node
+
+    install
+
+    build static assets
+
+    upload dist
+
+    deploy to Pages
+
+GitHub and Vite both document this pattern, and GitHub’s Pages deployment requires the Pages permissions and deployment environment when using the official Pages actions.
+3) Data refresh workflow
+
+Trigger on manual dispatch and optional schedule.
+Tasks:
+
+    pull fresh PID GTFS
+
+    run data-prep pipeline
+
+    open a PR or commit regenerated artifacts
+
+    attach summary of route/station changes
+
+Keep this workflow separate from the normal app deploy. That gives you deterministic app builds and explicit visibility when the transport dataset changes.
+Phase 11 — GitHub Pages deployment details
+
+    Set the correct Vite base.
+
+        root site: /
+
+        repo site: /<REPO>/
+
+    configure Pages source to GitHub Actions
+
+    create the github-pages environment
+
+    protect production deploys to main only
+
+    add a custom domain later only after the deployment is stable
+
+Vite explicitly documents the root-vs-repo base distinction for GitHub Pages, and GitHub’s docs describe the custom workflow flow and the github-pages environment model.
+Phase 12 — Testing plan
+Data tests
+
+    parser tests for each GTFS file you use
+
+    schema validation for generated JSON
+
+    station grouping correctness
+
+    route variant consistency
+
+    no orphan segments
+
+    no duplicate station IDs
+
+Projection tests
+
+    vehicle-to-trip mapping
+
+    progress interpolation
+
+    direction correctness
+
+    line branch correctness
+
+    stale vehicle expiration
+
+UI tests
+
+    loading state
+
+    proxy outage state
+
+    empty departures state
+
+    search
+
+    line filter
+
+    station popup
+
+    mobile layout sanity
+
+Manual QA scenarios
+
+    selected station with many tram departures
+
+    metro interchange with multiple branches nearby
+
+    line disruption or missing vehicles
+
+    slow proxy response
+
+    no realtime data but static map still works
+
+Phase 13 — Performance plan
+
+    keep static JSON artifacts compact
+
+    split heavy datasets by concern
+
+    compress polyline geometry
+
+    avoid shipping raw GTFS to the browser
+
+    lazy-load station details panel logic
+
+    memoize vehicle projection where possible
+
+    simplify text label rendering
+
+Performance budgets to define
+
+    initial JS payload ceiling
+
+    static data payload ceiling
+
+    target first paint
+
+    target map interactive time
+
+    target realtime refresh cost
+
+Phase 14 — Observability and operations
+Proxy-side
+
+    request logging
+
+    status endpoint
+
+    upstream latency tracking
+
+    upstream error rate tracking
+
+    response freshness stamp
+
+Frontend-side
+
+    visible “data age” indicator
+
+    soft error toast
+
+    fallback to last successful snapshot
+
+    debug mode for mapping mismatches
+
+Runbooks
+
+Write short docs for:
+
+    Golemio key rotation
+
+    Pages deployment rollback
+
+    broken GTFS refresh
+
+    station name mismatch
+
+    upstream realtime outage
+
+Phase 15 — Documentation to keep in repo
+
+Create these docs early:
+
+    ARCHITECTURE.md
+
+    DATA_MODEL.md
+
+    SCHEMATIC_RULES.md
+
+    DEPLOYMENT.md
+
+    RUNBOOK.md
+
+    ATTRIBUTION.md
+
+Phase 16 — Recommended delivery order
+
+Build in this exact order:
+
+    frontend repo + Pages deployment works
+
+    empty schematic shell renders
+
+    GTFS ingestion produces compact JSON
+
+    static stylized metro map renders
+
+    tram layer renders
+
+    Vercel proxy returns normalized realtime data
+
+    live vehicles appear on the schematic
+
+    delay styling works
+
+    station departure drawer works
+
+    search and polish
+
+    scheduled GTFS refresh
+
+    performance pass
+
+    attribution and release docs
+
+Definition of done for v1
+
+You are finished with v1 when all of this is true:
+
+    the site deploys automatically from GitHub Actions to Pages
+
+    the frontend contains no secret
+
+    the Vercel proxy is the only place that knows the Golemio key
+
+    the static schematic map is fully custom-styled
+
+    metro and trams render correctly from preprocessed GTFS-derived data
+
+    vehicles move on the schematic in near real time
+
+    delays are visible and understandable
+
+    a broken realtime feed does not break the page
+
+    attribution and license notes are visible
+
+The next best step is to turn this into an implementation backlog with epics, tickets, and task granularity suitable for GitHub Issues.
+
+
+ChatGPT says: Yes. I’d build this as **two deployables**: 1. **Static frontend**: a Vite + TypeScript app deployed to **GitHub Pages** by a **custom GitHub Actions workflow**. Vite’s production build goes to `dist` by default, and both Vite and GitHub document the GitHub Pages flow: set the correct `base`, select **GitHub Actions** in Pages settings, then build and deploy the `dist` artifact with the Pages actions. GitHub also notes that Pages sites are publicly reachable, so no secrets belong in the frontend repo or build output. citeturn993904view0turn526181view0turn993904view1turn993904view2 2. **Secret-bearing proxy**: a tiny **Vercel Functions** project that holds the Golemio API key in environment variables and exposes only a few safe endpoints to the browser. Vercel documents that environment variables are encrypted at rest and available during function execution, and that TypeScript functions under `/api` are deployed automatically with the Node.js runtime. citeturn993904view3turn993904view4turn993904view5 For data, use **PID GTFS static** for the network model and **Golemio/PID realtime** for vehicle positions, delays, and departures. PID’s open-data page says the GTFS feed is generated daily, realtime positions/delays are available online via GTFS Realtime or Golemio JSON, and `shape_dist_traveled` has a matching entry in `shapes.txt`, which is exactly what you need to place moving vehicles along precomputed route geometry. citeturn789186view1turn789186view2turn789186view3turn789186view0 ## Recommended structure Use **two repos** for v1: - `prague-transit-map` — GitHub Pages frontend - `prague-transit-proxy` — Vercel proxy That keeps deployment, secrets, and failure modes clean. You can merge to a monorepo later. --- ## Complete project plan ## Phase 0 — Freeze the product definition - Write a one-page product brief. - Lock the scope for v1: - Prague **metro + tram only** - stylized, schematic map - live vehicle dots - delay coloring - stop or station details on click - no journey planner - no full PID multimodal support yet - Define the exact visual style: - dark or light theme - degree of geographic distortion - line thickness rules - vehicle marker style - delay palette - typography and icon set - Define your acceptance criteria: - map loads fast - works on desktop first - graceful mobile fallback - no secret exposed in browser - live data failures do not break the page ## Phase 1 — Repository and delivery foundations ### Frontend repo - Create the frontend repository. - Add branch protection on `main`. - Decide the Pages URL shape: - user/org root site - or repo subpath site - Record the final public URL because it affects Vite `base`. - Enable GitHub Pages and choose **GitHub Actions** as the publishing source. GitHub’s Pages docs recommend the Actions path when you have a build step, and Vite explicitly documents the Pages workflow and `base` handling for root vs `/<REPO>/` deployments. citeturn993904view2turn526181view0 ### Proxy repo - Create the Vercel proxy repository. - Import it into Vercel. - Add environments: - Development - Preview - Production - Add `GOLEMIO_API_KEY` as a Vercel environment variable. - Decide the production proxy domain: - Vercel default domain is enough for v1 - custom subdomain later if needed - Write down allowed frontend origins for CORS. ### Shared project hygiene - Add issue templates: - bug - feature - data anomaly - Add labels: - frontend - data-pipeline - realtime - proxy - map-style - Create a `docs/` folder in the frontend repo for architecture notes. ## Phase 2 — Frontend scaffolding - Initialize the frontend as **Vite + TypeScript**. - Set up the minimal app shell: - app layout - loading state - error boundary - empty map placeholder - footer attribution block - Add tooling: - ESLint - Prettier - strict TypeScript - path aliases - Decide rendering strategy. ### Recommended rendering strategy For a **highly stylized schematic** map, use: - **SVG** for the network and station graph - lightweight DOM/CSS animation for vehicle markers - optional Canvas layer later only if marker counts get large Reason: SVG is much better than a geographic map library for crisp line design, labels, interchange symbols, and precise artistic control. ### Frontend module plan Create these logical modules: - `core/` — app bootstrap, config, error handling - `data/` — fetchers, parsers, runtime stores - `map/` — line rendering, stations, labels, vehicles - `ui/` — panels, legends, toggles, popovers - `styles/` — design tokens and theming - `types/` — shared domain types - `assets/` — static icons and optional background shapes ## Phase 3 — Data model design Design the internal data contracts **before** writing any visualization. ### Static domain model Define entities for: - line - route variant - direction - station - stop - interchange - segment - shape polyline - stylized node - stylized edge - label anchor ### Realtime domain model Define entities for: - vehicle - trip - service state - delay status - position sample - freshness timestamp - proxy fetch status ### Mapping rules Document how these are linked: - GTFS `route_id` → internal line - GTFS `trip_id` → runtime vehicle trip - stop → station grouping - shape polyline → stylized edge chain - realtime vehicle → schematic position This is the most important design step in the whole project. ## Phase 4 — Static GTFS ingestion pipeline Build a separate **data-prep pipeline** inside the frontend repo. It should run locally and in GitHub Actions, but it should be conceptually independent from the runtime UI. ### Inputs - PID GTFS archive - optional manually curated overrides file - optional Prague boundary or district reference data for context layers ### Pipeline tasks - download or load the GTFS archive - unzip it - parse the needed files: - `routes.txt` - `trips.txt` - `stop_times.txt` - `stops.txt` - `shapes.txt` - optionally `transfers.txt` - filter only: - metro - tram - normalize stop naming and direction handling - collapse duplicate or virtual stop records where needed - group platform-level stops into station-level objects for UI - generate a simplified internal network graph - generate route variant metadata - generate line color and branding metadata - export compact JSON artifacts for the frontend ### Critical transformation tasks - identify the **canonical route variants** you actually want to render - separate passenger routes from edge cases you do not want in v1 - detect depot and irregular tram movements and exclude or flag them - compute stop order per variant - compute station-to-station segment boundaries - store a stable mapping from trip/route data to schematic segments Because PID guarantees that `shape_dist_traveled` aligns with entries in `shapes.txt`, you can build precise segment boundaries once and reuse them for vehicle projection later. citeturn789186view0 ## Phase 5 — Schematic map authoring This is where the project becomes a design product rather than a transport dashboard. ### Choose your schematic strategy Use a **hybrid** model: - start from real GTFS topology - manually author the final visual geometry That means: - **data truth** comes from GTFS - **visual truth** comes from your own hand-shaped line layout ### Authoring tasks - create a schematic coordinate system independent of lat/lon - define control points for each metro line - define control points for each tram trunk corridor - define station anchor points - define interchange symbols - define label anchors - define z-index rules: - lines - stations - vehicles - labels - popups ### Deliverables Produce versioned JSON files such as: - `network.static.json` - `schematic.geometry.json` - `station-index.json` - `line-style.json` ### Visual design tasks - choose corner radii - standardize line bends - standardize station spacing - standardize icon sizes - create a delay legend - create vehicle glyphs for metro vs tram - design reduced-motion mode ## Phase 6 — Realtime proxy design on Vercel Keep the proxy **tiny** and **read-only**. ### Endpoints for v1 Expose only: - `/api/vehicle-positions` - `/api/trip-updates` or equivalent delay feed - `/api/departures?stopId=...` - `/api/health` Do not create a generic passthrough proxy. ### Proxy responsibilities - attach the Golemio access token server-side - request only the specific upstream datasets you need - normalize upstream responses into your frontend shape - strip fields you do not use - add cache headers - add request timeout handling - add upstream error translation - add CORS allowlist for your Pages domain - add freshness timestamps in every response ### Proxy safety rules - never forward the raw key - never proxy arbitrary URLs - rate-limit by simple heuristics if traffic grows - log upstream failures and slow requests - return partial data instead of hard failure where possible ### Environment setup Maintain separate Vercel env variables for: - production key - preview key - optional origin allowlist - optional upstream base URL overrides Vercel’s docs support this model directly: env vars are project-level or team-level, apply per environment, and are read during function execution. citeturn993904view3 ## Phase 7 — Runtime data flow in the frontend Design the browser fetch layer around resilience. ### Fetch strategy - fetch static JSON assets from Pages on app start - fetch realtime proxy data on an interval - use stale-last-good data when a refresh fails - surface freshness to the user ### Polling plan Use separate refresh cadences: - vehicle positions: fastest - trip updates/delays: moderate - departures panel: on-demand or slower cadence ### Store design Create separate stores for: - static network - schematic geometry - vehicles - delays - selected station - selected line - app settings ### Runtime reconciliation At each refresh: - match incoming vehicles to trips - map trip to static route variant - map route variant to schematic geometry - compute vehicle progress along the stylized polyline - apply delay state to marker and line segment styling - expire stale vehicles cleanly ## Phase 8 — Vehicle projection and delay visualization This is the core algorithmic milestone. ### Projection tasks - map each realtime vehicle to its trip - determine direction and variant - locate nearest valid segment or progress position - interpolate onto your stylized line - smooth motion between polling intervals - avoid jumping backward on noisy updates ### Delay tasks Define clear delay buckets, for example: - on time - minor delay - moderate delay - severe delay - unknown Then apply them consistently to: - vehicle marker color or ring - selected line summary - station departure rows - optional status banner ### Edge cases to handle - missing trip mapping - short-turn services - depot runs - vehicle appears before full trip resolution - stale positions - duplicate vehicles - diverging tram route variants sharing early segments ## Phase 9 — User interface plan ### Core views - full schematic map - line filter - layer toggles - search box - station detail drawer - vehicle detail tooltip - status/legend panel ### Essential interactions - click station → show upcoming departures - click line → isolate and highlight line - hover vehicle → show line, destination, delay - search stop/station → focus and highlight - toggle metro-only / tram-only ### Accessibility tasks - keyboard navigation - focus outlines - ARIA for controls - color contrast checks - non-color delay indication - reduced-motion mode ### Attribution tasks Add visible credits for: - PID / Golemio data - OSM, only if any OSM-derived layer is used - your own map styling attribution PID states that downloadable data on its site is CC-BY, so attribution should be treated as a first-class requirement. citeturn993904view6 ## Phase 10 — GitHub Actions workflow plan Create **three workflows** in the frontend repo. ### 1) CI workflow Trigger on pull requests and pushes. Tasks: - install dependencies - typecheck - lint - run unit tests - validate static data artifacts - fail on oversized bundles if needed ### 2) Build-and-deploy Pages workflow Trigger on `main` pushes and manual dispatch. Tasks: - checkout - setup Node - install - build static assets - upload `dist` - deploy to Pages GitHub and Vite both document this pattern, and GitHub’s Pages deployment requires the Pages permissions and deployment environment when using the official Pages actions. citeturn526181view0turn993904view1 ### 3) Data refresh workflow Trigger on manual dispatch and optional schedule. Tasks: - pull fresh PID GTFS - run data-prep pipeline - open a PR or commit regenerated artifacts - attach summary of route/station changes Keep this workflow separate from the normal app deploy. That gives you deterministic app builds and explicit visibility when the transport dataset changes. ## Phase 11 — GitHub Pages deployment details - Set the correct Vite `base`. - root site: `/` - repo site: `/<REPO>/` - configure Pages source to **GitHub Actions** - create the `github-pages` environment - protect production deploys to `main` only - add a custom domain later only after the deployment is stable Vite explicitly documents the root-vs-repo `base` distinction for GitHub Pages, and GitHub’s docs describe the custom workflow flow and the `github-pages` environment model. citeturn526181view0turn993904view1turn993904view2 ## Phase 12 — Testing plan ### Data tests - parser tests for each GTFS file you use - schema validation for generated JSON - station grouping correctness - route variant consistency - no orphan segments - no duplicate station IDs ### Projection tests - vehicle-to-trip mapping - progress interpolation - direction correctness - line branch correctness - stale vehicle expiration ### UI tests - loading state - proxy outage state - empty departures state - search - line filter - station popup - mobile layout sanity ### Manual QA scenarios - selected station with many tram departures - metro interchange with multiple branches nearby - line disruption or missing vehicles - slow proxy response - no realtime data but static map still works ## Phase 13 — Performance plan - keep static JSON artifacts compact - split heavy datasets by concern - compress polyline geometry - avoid shipping raw GTFS to the browser - lazy-load station details panel logic - memoize vehicle projection where possible - simplify text label rendering ### Performance budgets to define - initial JS payload ceiling - static data payload ceiling - target first paint - target map interactive time - target realtime refresh cost ## Phase 14 — Observability and operations ### Proxy-side - request logging - status endpoint - upstream latency tracking - upstream error rate tracking - response freshness stamp ### Frontend-side - visible “data age” indicator - soft error toast - fallback to last successful snapshot - debug mode for mapping mismatches ### Runbooks Write short docs for: - Golemio key rotation - Pages deployment rollback - broken GTFS refresh - station name mismatch - upstream realtime outage ## Phase 15 — Documentation to keep in repo Create these docs early: - `ARCHITECTURE.md` - `DATA_MODEL.md` - `SCHEMATIC_RULES.md` - `DEPLOYMENT.md` - `RUNBOOK.md` - `ATTRIBUTION.md` ## Phase 16 — Recommended delivery order Build in this exact order: 1. frontend repo + Pages deployment works 2. empty schematic shell renders 3. GTFS ingestion produces compact JSON 4. static stylized metro map renders 5. tram layer renders 6. Vercel proxy returns normalized realtime data 7. live vehicles appear on the schematic 8. delay styling works 9. station departure drawer works 10. search and polish 11. scheduled GTFS refresh 12. performance pass 13. attribution and release docs --- ## Definition of done for v1 You are finished with v1 when all of this is true: - the site deploys automatically from GitHub Actions to Pages - the frontend contains no secret - the Vercel proxy is the only place that knows the Golemio key - the static schematic map is fully custom-styled - metro and trams render correctly from preprocessed GTFS-derived data - vehicles move on the schematic in near real time - delays are visible and understandable - a broken realtime feed does not break the page - attribution and license notes are visible The next best step is to turn this into an **implementation backlog** with epics, tickets, and task granularity suitable for GitHub Issues.
