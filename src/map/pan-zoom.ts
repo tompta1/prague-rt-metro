@@ -86,10 +86,16 @@ export function initPanZoom(svg: SVGSVGElement, onZoom?: (vbWidth: number) => vo
 
   // ── Touch pinch+pan ─────────────────────────────────────────────────────────
   let lastTouches: TouchList | null = null
+  let tapStart: { x: number; y: number } | null = null
 
   svg.addEventListener('touchstart', e => {
     e.preventDefault()
     lastTouches = e.touches
+    if (e.touches.length === 1) {
+      tapStart = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }
+    } else {
+      tapStart = null
+    }
   }, { passive: false })
 
   svg.addEventListener('touchmove', e => {
@@ -128,5 +134,15 @@ export function initPanZoom(svg: SVGSVGElement, onZoom?: (vbWidth: number) => vo
     lastTouches = cur
   }, { passive: false })
 
-  svg.addEventListener('touchend', () => { lastTouches = null }, { passive: false })
+  svg.addEventListener('touchend', e => {
+    if (tapStart && e.changedTouches.length === 1) {
+      const t = e.changedTouches[0]!
+      if (Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) < 10) {
+        const el = document.elementFromPoint(t.clientX, t.clientY)
+        el?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      }
+    }
+    tapStart = null
+    lastTouches = null
+  }, { passive: false })
 }
