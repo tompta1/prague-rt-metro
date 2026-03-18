@@ -178,23 +178,4 @@ describe('fetcher filtering logic', () => {
   })
 })
 
-// ── Delay classification ───────────────────────────────────────────────────────
-
-function classifyDelay(sec: number | null | undefined): string {
-  if (sec == null) return 'unknown'
-  if (sec < 60) return 'on-time'
-  if (sec < 300) return 'slight'
-  return 'late'
-}
-
-describe('classifyDelay', () => {
-  it('null → unknown', () => expect(classifyDelay(null)).toBe('unknown'))
-  it('undefined → unknown', () => expect(classifyDelay(undefined)).toBe('unknown'))
-  it('0 → on-time', () => expect(classifyDelay(0)).toBe('on-time'))
-  it('59 → on-time', () => expect(classifyDelay(59)).toBe('on-time'))
-  it('60 → slight', () => expect(classifyDelay(60)).toBe('slight'))
-  it('299 → slight', () => expect(classifyDelay(299)).toBe('slight'))
-  it('300 → late', () => expect(classifyDelay(300)).toBe('late'))
-  it('600 → late', () => expect(classifyDelay(600)).toBe('late'))
-  it('negative (ahead of schedule) → on-time', () => expect(classifyDelay(-30)).toBe('on-time'))
-})
+// classifyDelay is tested in test/fetcher.test.ts (imported directly from @/data/fetcher)

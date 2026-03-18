@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { setCors, handlePreflight } from './_cors'
+import { setCors, handlePreflight, isAllowedOrigin } from './_cors'
 
 const GOLEMIO_URL = 'https://api.golemio.cz/v2/pid/departureboards'
 const UPSTREAM_TIMEOUT_MS = 8_000
@@ -9,6 +9,10 @@ export default async function handler(
   res: VercelResponse,
 ): Promise<void> {
   if (handlePreflight(req, res)) return
+  if (!isAllowedOrigin(req)) {
+    res.status(403).json({ error: 'Forbidden' })
+    return
+  }
   setCors(res)
 
   const apiKey = process.env['GOLEMIO_API_KEY']

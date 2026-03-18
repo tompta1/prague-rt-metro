@@ -1,4 +1,5 @@
 import type { Departure } from '@/types'
+import { FetchError } from '@/core/errors'
 
 const REFRESH_MS = 30_000
 
@@ -8,7 +9,7 @@ function lineColor(lineId: string): string {
   return METRO_COLORS[lineId] ?? '#888'
 }
 
-function minutesUntil(isoTimestamp: string): number {
+export function minutesUntil(isoTimestamp: string): number {
   return Math.round((new Date(isoTimestamp).getTime() - Date.now()) / 60_000)
 }
 
@@ -18,7 +19,7 @@ export class DeparturePanel {
   private listEl: HTMLElement
   private statusEl: HTMLElement
   private currentName: string | null = null
-  private refreshTimer: ReturnType<typeof setInterval> | null = null
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null
   private fetcher: (name: string) => Promise<Departure[]>
 
   constructor(container: HTMLElement, fetcher: (name: string) => Promise<Departure[]>) {
@@ -73,15 +74,27 @@ export class DeparturePanel {
     this.listEl.innerHTML = ''
     this.statusEl.textContent = 'Loading…'
 
+    this.clearRefreshTimer()
     void this.refresh()
-    if (this.refreshTimer) clearInterval(this.refreshTimer)
-    this.refreshTimer = setInterval(() => void this.refresh(), REFRESH_MS)
   }
 
   hide(): void {
     this.el.classList.add('hidden')
     this.currentName = null
-    if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null }
+    this.clearRefreshTimer()
+  }
+
+  private clearRefreshTimer(): void {
+    if (this.refreshTimer !== null) {
+      clearTimeout(this.refreshTimer)
+      this.refreshTimer = null
+    }
+  }
+
+  private scheduleRefresh(): void {
+    if (!this.currentName) return
+    this.clearRefreshTimer()
+    this.refreshTimer = setTimeout(() => void this.refresh(), REFRESH_MS)
   }
 
   private async refresh(): Promise<void> {
@@ -90,8 +103,16 @@ export class DeparturePanel {
       const departures = await this.fetcher(this.currentName)
       this.renderDepartures(departures)
       this.statusEl.textContent = `Updated ${new Date().toLocaleTimeString()}`
-    } catch {
-      this.statusEl.textContent = 'Failed to load departures'
+    } catch (err) {
+      if (err instanceof FetchError) {
+        if (err.status === 0) this.statusEl.textContent = 'Timeout — retrying'
+        else if (err.status === 429) this.statusEl.textContent = 'Rate limit (429)'
+        else this.statusEl.textContent = 'Departures unavailable'
+      } else {
+        this.statusEl.textContent = 'Departures unavailable'
+      }
+    } finally {
+      this.scheduleRefresh()
     }
   }
 

@@ -4,40 +4,56 @@ import { API } from '@/core/config'
 import { toCanonicalProgress, LINE_TOTAL_KM } from '@/map/network'
 
 const METRO_LINE_IDS = new Set(Object.keys(LINE_TOTAL_KM))  // A, B, C
-const FETCH_TIMEOUT_MS = 12_000
+export const FETCH_TIMEOUT_MS = 12_000
 const RETRY_DELAY_MS = 2_000
 
-export async function fetchVehiclePositions(): Promise<Vehicle[]> {
-  try {
-    return await fetchOnce()
-  } catch (err) {
-    if (err instanceof FetchError && err.status >= 500) throw err
-    await sleep(RETRY_DELAY_MS)
-    return await fetchOnce()
-  }
-}
-
-async function fetchOnce(): Promise<Vehicle[]> {
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
-  let res: Response
+  // Combine internal timeout signal with any external signal from caller
+  const externalSignal = init?.signal instanceof AbortSignal ? init.signal : null
+  const signal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal
+
   try {
-    res = await fetch(API.vehiclePositions, { signal: controller.signal })
+    return await fetch(url, { ...init, signal })
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new FetchError(API.vehiclePositions, 0, 'Request timed out')
+      if (controller.signal.aborted) {
+        throw new FetchError(url, 0, 'Request timed out')
+      }
+      throw err  // external abort — re-throw as-is
     }
     throw err
   } finally {
     clearTimeout(timeout)
   }
+}
+
+export async function fetchVehiclePositions(signal?: AbortSignal): Promise<Vehicle[]> {
+  try {
+    return await fetchOnce(signal)
+  } catch (err) {
+    if (signal?.aborted) throw err
+    if (err instanceof FetchError && err.status >= 500) throw err
+    await sleep(RETRY_DELAY_MS)
+    return await fetchOnce(signal)
+  }
+}
+
+async function fetchOnce(signal?: AbortSignal): Promise<Vehicle[]> {
+  const res = await fetchWithTimeout(API.vehiclePositions, signal ? { signal } : undefined)
 
   if (!res.ok) {
     throw new FetchError(API.vehiclePositions, res.status, `HTTP ${res.status}`)
   }
 
-  const data: GolemioVehiclePositionsResponse = await res.json()
+  const data: unknown = await res.json()
+  if (!isValidVehiclePositionsResponse(data)) {
+    throw new FetchError(API.vehiclePositions, 0, 'Unexpected API response shape')
+  }
 
   return data.features.flatMap((f): Vehicle[] => {
     const gtfs = f.properties.trip.gtfs
@@ -87,7 +103,16 @@ async function fetchOnce(): Promise<Vehicle[]> {
   })
 }
 
-function classifyDelay(sec: number | null | undefined): Vehicle['delayStatus'] {
+function isValidVehiclePositionsResponse(data: unknown): data is GolemioVehiclePositionsResponse {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'features' in data &&
+    Array.isArray((data as { features: unknown }).features)
+  )
+}
+
+export function classifyDelay(sec: number | null | undefined): Vehicle['delayStatus'] {
   if (sec == null) return 'unknown'
   if (sec < 60) return 'on-time'
   if (sec < 300) return 'slight'
@@ -95,20 +120,7 @@ function classifyDelay(sec: number | null | undefined): Vehicle['delayStatus'] {
 }
 
 export async function fetchDepartures(stationName: string): Promise<Departure[]> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-
-  let res: Response
-  try {
-    res = await fetch(API.departures(stationName), { signal: controller.signal })
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new FetchError(API.departures(stationName), 0, 'Request timed out')
-    }
-    throw err
-  } finally {
-    clearTimeout(timeout)
-  }
+  const res = await fetchWithTimeout(API.departures(stationName))
 
   if (!res.ok) throw new FetchError(API.departures(stationName), res.status, `HTTP ${res.status}`)
 

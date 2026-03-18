@@ -46,10 +46,8 @@ onStationClick((name, lineIds) => {
   panel.show(name, lineIds)
 })
 
-svg.addEventListener('click', e => {
-  if ((e.target as Element).closest('.metro-station') === null) {
-    panel.hide()
-  }
+svg.addEventListener('click', () => {
+  panel.hide()
 })
 
 // ── Realtime ──────────────────────────────────────────────────────────────────

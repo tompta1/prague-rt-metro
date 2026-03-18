@@ -8,6 +8,8 @@ let vehicles: Vehicle[] = []
 let lastError: Error | null = null
 const listeners = new Set<Listener>()
 let timerId: ReturnType<typeof setTimeout> | null = null
+let pollController: AbortController | null = null
+let isPolling = false
 
 export function subscribe(fn: Listener): () => void {
   listeners.add(fn)
@@ -16,23 +18,30 @@ export function subscribe(fn: Listener): () => void {
 }
 
 export function startPolling(): void {
-  if (timerId !== null) return
+  if (isPolling) return
+  isPolling = true
   void poll()
 }
 
 export function stopPolling(): void {
+  isPolling = false
   if (timerId !== null) {
     clearTimeout(timerId)
     timerId = null
   }
+  pollController?.abort()
+  pollController = null
 }
 
 async function poll(): Promise<void> {
+  pollController = new AbortController()
+  const { signal } = pollController
   try {
-    vehicles = await fetchVehiclePositions()
+    vehicles = await fetchVehiclePositions(signal)
     lastError = null
     listeners.forEach(fn => fn(vehicles, null))
   } catch (err) {
+    if (signal.aborted) return  // deliberately stopped — don't notify or reschedule
     lastError = err instanceof Error ? err : new Error(String(err))
     console.warn('[store] vehicle positions fetch failed', lastError.message)
     // Notify listeners with the stale vehicle list so the map stays visible
@@ -40,6 +49,10 @@ async function poll(): Promise<void> {
   } finally {
     // setTimeout chain: next poll only starts after this one completes,
     // preventing pile-up if Golemio is slow.
-    timerId = setTimeout(() => void poll(), POLL_INTERVAL_MS)
+    if (isPolling && !signal.aborted) {
+      timerId = setTimeout(() => void poll(), POLL_INTERVAL_MS)
+    } else {
+      timerId = null
+    }
   }
 }
