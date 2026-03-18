@@ -101,6 +101,7 @@ export async function initGtfsLayer(svg: SVGSVGElement): Promise<void> {
 
   renderTramLayer(svg, _network)
   renderMetroLayer(svg, _network)
+  updateLabels(1000)  // apply initial visibility at default viewBox width
 
   console.log(
     `[gtfs-layer] ${_network.metro.routes.length} metro routes, ` +

@@ -54,10 +54,8 @@ svg.addEventListener('click', e => {
 
 // ── Realtime ──────────────────────────────────────────────────────────────────
 
-let pollCount = 0
-
 subscribe((vehicles, error) => {
-  if (++pollCount > 1) loadingOverlay.classList.add('hidden')
+  loadingOverlay.classList.add('hidden')
 
   if (error) {
     statusBar.classList.add('error')

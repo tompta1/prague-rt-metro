@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { setCors, handlePreflight } from './_cors'
 
 const GOLEMIO_URL = 'https://api.golemio.cz/v2/pid/departureboards'
 const UPSTREAM_TIMEOUT_MS = 8_000
@@ -7,6 +8,9 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse,
 ): Promise<void> {
+  if (handlePreflight(req, res)) return
+  setCors(res)
+
   const apiKey = process.env['GOLEMIO_API_KEY']
   if (!apiKey) {
     res.status(500).json({ error: 'GOLEMIO_API_KEY not configured' })
@@ -40,7 +44,6 @@ export default async function handler(
     const data: unknown = await upstream.json()
 
     res.setHeader('Cache-Control', 'public, max-age=10')
-    res.setHeader('Access-Control-Allow-Origin', process.env['ALLOWED_ORIGIN'] ?? '*')
     res.status(200).json(data)
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
