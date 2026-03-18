@@ -1,10 +1,11 @@
 import '@/styles/main.css'
-import { createMapSVG, setVehicleTargets, startAnimation } from '@/map/renderer'
+import { createMapSVG, setVehicleTargets, startAnimation, initVehicleClicks } from '@/map/renderer'
 import { initGtfsLayer, onStationClick } from '@/map/gtfs-layer'
 import { subscribe, startPolling } from '@/data/store'
 import { fetchDepartures } from '@/data/fetcher'
 import { FetchError } from '@/core/errors'
 import { DeparturePanel } from '@/ui/panel'
+import { VehicleTooltip } from '@/ui/vehicle-tooltip'
 
 const app = document.getElementById('app')!
 
@@ -41,13 +42,21 @@ void initGtfsLayer(svg)
 // ── Departure panel ───────────────────────────────────────────────────────────
 
 const panel = new DeparturePanel(mapContainer, fetchDepartures)
+const tooltip = new VehicleTooltip(mapContainer)
+
+initVehicleClicks(svg, (info, x, y) => {
+  panel.hide()
+  tooltip.show(info, x, y)
+})
 
 onStationClick((name, lineIds) => {
+  tooltip.hide()
   panel.show(name, lineIds)
 })
 
 svg.addEventListener('click', () => {
   panel.hide()
+  tooltip.hide()
 })
 
 // ── Realtime ──────────────────────────────────────────────────────────────────

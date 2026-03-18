@@ -1,4 +1,4 @@
-import type { Vehicle } from '@/types'
+import type { Vehicle, DelayStatus } from '@/types'
 import { interpolateAlongLine } from './network'
 import { getProjectedShapes, updateLabels } from './gtfs-layer'
 import { project } from './projection'
@@ -110,6 +110,8 @@ export function setVehicleTargets(svg: SVGSVGElement, vehicles: Vehicle[]): void
       state.pollTime = now
       state.lineId = v.lineId
       state.el.setAttribute('fill', DELAY_COLORS[v.delayStatus] ?? '#888')
+      state.el.setAttribute('data-delay-status', v.delayStatus)
+      state.el.setAttribute('data-delay-sec', v.delaySec != null ? String(v.delaySec) : '')
     } else {
       const circle = document.createElementNS(SVG_NS, 'circle')
       const radius = v.type === 'metro' ? '8' : v.type === 'tram' ? '4' : v.type === 'rail' ? '5' : v.type === 'ferry' ? '4' : '3'
@@ -118,6 +120,11 @@ export function setVehicleTargets(svg: SVGSVGElement, vehicles: Vehicle[]): void
       const cls = `vehicle-marker${v.type !== 'metro' ? ` ${v.type}-marker` : ''}`
       circle.setAttribute('class', cls)
       circle.setAttribute('data-trip-id', v.tripId)
+      circle.setAttribute('data-line-id', v.lineId)
+      circle.setAttribute('data-headsign', v.headsign)
+      circle.setAttribute('data-delay-status', v.delayStatus)
+      circle.setAttribute('data-delay-sec', v.delaySec != null ? String(v.delaySec) : '')
+      circle.setAttribute('data-type', v.type)
 
       const [x, y] = fixedPos ?? vehiclePosition(v.lineId, v.progress)
       circle.setAttribute('cx', String(Math.round(x)))
@@ -134,6 +141,36 @@ export function setVehicleTargets(svg: SVGSVGElement, vehicles: Vehicle[]): void
   for (const [id, state] of vehicleStates) {
     if (!seen.has(id)) { state.el.remove(); vehicleStates.delete(id) }
   }
+}
+
+export interface VehicleClickInfo {
+  tripId: string
+  lineId: string
+  headsign: string
+  type: Vehicle['type']
+  delayStatus: DelayStatus
+  delaySec?: number
+}
+
+export function initVehicleClicks(
+  svg: SVGSVGElement,
+  onVehicleClick: (info: VehicleClickInfo, clientX: number, clientY: number) => void,
+): void {
+  const layer = svg.querySelector('.vehicle-layer')!
+  layer.addEventListener('click', e => {
+    const target = e.target as SVGElement
+    if (!target.classList.contains('vehicle-marker')) return
+    e.stopPropagation()
+    const info: VehicleClickInfo = {
+      tripId:      target.getAttribute('data-trip-id') ?? '',
+      lineId:      target.getAttribute('data-line-id') ?? '',
+      headsign:    target.getAttribute('data-headsign') ?? '',
+      type:        (target.getAttribute('data-type') ?? 'other') as Vehicle['type'],
+      delayStatus: (target.getAttribute('data-delay-status') ?? 'unknown') as DelayStatus,
+      delaySec:    target.getAttribute('data-delay-sec') ? Number(target.getAttribute('data-delay-sec')) : undefined,
+    }
+    onVehicleClick(info, (e as MouseEvent).clientX, (e as MouseEvent).clientY)
+  })
 }
 
 export function startAnimation(): void {
