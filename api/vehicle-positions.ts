@@ -1,9 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const GOLEMIO_URL = 'https://api.golemio.cz/v2/vehiclepositions'
-// routeShortName filters to metro lines only; each line runs ≤35 trains so 200 is ample.
-const UPSTREAM_PARAMS = 'limit=200&includeNotTracking=false&routeShortName=A&routeShortName=B&routeShortName=C'
+// Golemio does not support repeated routeShortName params — fetch one line at a time.
+const METRO_LINES = ['A', 'B', 'C'] as const
+const BASE_PARAMS = 'limit=60&includeNotTracking=false'
 const UPSTREAM_TIMEOUT_MS = 8_000
+
+interface GeoJsonFeatureCollection { type: string; features: unknown[] }
 
 export default async function handler(
   _req: VercelRequest,
@@ -19,24 +22,30 @@ export default async function handler(
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
 
   try {
-    const upstream = await fetch(`${GOLEMIO_URL}?${UPSTREAM_PARAMS}`, {
-      headers: {
-        'X-Access-Token': apiKey,
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    })
+    const responses = await Promise.all(
+      METRO_LINES.map(line =>
+        fetch(`${GOLEMIO_URL}?${BASE_PARAMS}&routeShortName=${line}`, {
+          headers: { 'X-Access-Token': apiKey, Accept: 'application/json' },
+          signal: controller.signal,
+        })
+      )
+    )
 
-    if (!upstream.ok) {
-      res.status(upstream.status).json({ error: `Upstream error: ${upstream.status}` })
+    const failed = responses.find(r => !r.ok)
+    if (failed) {
+      res.status(failed.status).json({ error: `Upstream error: ${failed.status}` })
       return
     }
 
-    const data: unknown = await upstream.json()
+    const bodies = await Promise.all(responses.map(r => r.json() as Promise<GeoJsonFeatureCollection>))
+    const merged: GeoJsonFeatureCollection = {
+      type: 'FeatureCollection',
+      features: bodies.flatMap(b => b.features),
+    }
 
     res.setHeader('Cache-Control', 'public, max-age=15')
     res.setHeader('Access-Control-Allow-Origin', process.env['ALLOWED_ORIGIN'] ?? '*')
-    res.status(200).json(data)
+    res.status(200).json(merged)
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       console.error('[vehicle-positions] upstream timeout')

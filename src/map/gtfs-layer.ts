@@ -56,6 +56,16 @@ const INTERCHANGES: Record<string, string[]> = {
   'Můstek':  ['A', 'B'],
 }
 
+// ── Per-label zoom threshold registry ────────────────────────────────────────
+
+const _labels: Array<{ el: SVGTextElement; threshold: number }> = []
+
+export function updateLabels(vbWidth: number): void {
+  for (const { el, threshold } of _labels) {
+    el.classList.toggle('label-visible', vbWidth < threshold)
+  }
+}
+
 // ── Click callback ────────────────────────────────────────────────────────────
 
 type StationClickHandler = (name: string, lineIds: string[]) => void
@@ -65,10 +75,20 @@ export function onStationClick(handler: StationClickHandler): void {
   _onClick = handler
 }
 
-// ── Cached network ────────────────────────────────────────────────────────────
+// ── Cached network + projected shapes ────────────────────────────────────────
 
 let _network: Network | null = null
 export function getNetwork(): Network | null { return _network }
+
+/**
+ * Metro shapes projected to SVG coords, keyed by lineId.
+ * Direction '0' is used; populated after initGtfsLayer resolves.
+ * Used by renderer.ts so vehicle markers follow the geographic lines.
+ */
+const _projectedShapes: Record<string, [number, number][]> = {}
+export function getProjectedShapes(): Record<string, [number, number][]> {
+  return _projectedShapes
+}
 
 // ── Main init ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +101,12 @@ export async function initGtfsLayer(svg: SVGSVGElement): Promise<void> {
   } catch (e) {
     console.warn('[gtfs-layer] Failed to load network.json:', e)
     return
+  }
+
+  // Build projected shapes for vehicle interpolation in renderer.ts
+  for (const route of _network.metro.routes) {
+    const coords = route.shapes['0'] ?? Object.values(route.shapes)[0]
+    if (coords) _projectedShapes[route.id] = coords.map(([lon, lat]) => project(lon, lat))
   }
 
   renderTramLayer(svg, _network)
@@ -109,37 +135,110 @@ function renderTramLayer(svg: SVGSVGElement, network: Network): void {
     const polyline = document.createElementNS(SVG_NS, 'polyline')
     polyline.setAttribute('points', pts.map(([x, y]) => `${x},${y}`).join(' '))
     polyline.setAttribute('fill', 'none')
-    polyline.setAttribute('stroke', '#c0392b')
+    polyline.setAttribute('stroke', '#444')
     polyline.setAttribute('stroke-width', '1.5')
     polyline.setAttribute('stroke-linecap', 'round')
     polyline.setAttribute('stroke-linejoin', 'round')
-    polyline.setAttribute('opacity', '0.5')
+    polyline.setAttribute('opacity', '0.2')
     routesG.appendChild(polyline)
   }
 
   const stopsG = document.createElementNS(SVG_NS, 'g')
   stopsG.setAttribute('class', 'tram-stops')
 
-  for (const stop of network.tram.stops) {
-    const [x, y] = project(stop.lon, stop.lat)
-    const c = document.createElementNS(SVG_NS, 'circle')
-    c.setAttribute('cx', String(x))
-    c.setAttribute('cy', String(y))
-    c.setAttribute('r', '1.5')
-    c.setAttribute('fill', '#aaa')
-    c.setAttribute('opacity', '0.45')
-    stopsG.appendChild(c)
+  // Pass 1 – project all tram stops
+  interface ProjectedTramStop {
+    id: string; name: string; pos: [number, number]; threshold: number
   }
+  const projectedTram: ProjectedTramStop[] = network.tram.stops.map(s => ({
+    id: s.id, name: s.name, pos: project(s.lon, s.lat), threshold: 0,
+  }))
+
+  // Pass 2 – group by name, pick representative, compute cross-group threshold
+  const byName = new Map<string, ProjectedTramStop[]>()
+  for (const stop of projectedTram) {
+    const g = byName.get(stop.name) ?? []
+    g.push(stop)
+    byName.set(stop.name, g)
+  }
+
+  const representatives: ProjectedTramStop[] = []
+  for (const group of byName.values()) {
+    // centroid
+    const cx = group.reduce((s, p) => s + p.pos[0], 0) / group.length
+    const cy = group.reduce((s, p) => s + p.pos[1], 0) / group.length
+    // representative = stop closest to centroid
+    let rep = group[0]!
+    let bestD = Infinity
+    for (const stop of group) {
+      const d = (stop.pos[0] - cx) ** 2 + (stop.pos[1] - cy) ** 2
+      if (d < bestD) { bestD = d; rep = stop }
+    }
+    // cross-group min distance (ignores same-name platforms)
+    let minDistSq = Infinity
+    for (const other of projectedTram) {
+      if (other.name === rep.name) continue
+      const dx = rep.pos[0] - other.pos[0]
+      const dy = rep.pos[1] - other.pos[1]
+      const dSq = dx * dx + dy * dy
+      if (dSq < minDistSq) minDistSq = dSq
+    }
+    rep.threshold = Math.max(110, Math.min(200, Math.sqrt(minDistSq) * 20))
+    representatives.push(rep)
+  }
+
+  // Pass 3 – render: all stops get dots/hit circles; only reps get labels
+  const repSet = new Set(representatives)
+
+  for (const stop of projectedTram) {
+    const [x, y] = stop.pos
+
+    // Invisible hit circle (larger radius for easy tapping/clicking)
+    const hit = document.createElementNS(SVG_NS, 'circle')
+    hit.setAttribute('cx', String(x))
+    hit.setAttribute('cy', String(y))
+    hit.setAttribute('r', '6')
+    hit.setAttribute('fill', 'transparent')
+    hit.setAttribute('data-name', stop.name)
+    hit.style.cursor = 'pointer'
+    stopsG.appendChild(hit)
+
+    // Visual dot
+    const dot = document.createElementNS(SVG_NS, 'circle')
+    dot.setAttribute('cx', String(x))
+    dot.setAttribute('cy', String(y))
+    dot.setAttribute('r', '1')
+    dot.setAttribute('fill', '#444')
+    dot.setAttribute('opacity', '0.25')
+    dot.setAttribute('pointer-events', 'none')
+    stopsG.appendChild(dot)
+
+    if (repSet.has(stop)) {
+      const label = document.createElementNS(SVG_NS, 'text') as SVGTextElement
+      label.setAttribute('x', String(x + 3))
+      label.setAttribute('y', String(y + 2))
+      label.setAttribute('class', 'tram-stop-label')
+      label.textContent = stop.name
+      stopsG.appendChild(label)
+      _labels.push({ el: label, threshold: stop.threshold })
+    }
+  }
+
+  // Event delegation: one listener for all tram stops
+  stopsG.addEventListener('click', e => {
+    const target = e.target as SVGElement
+    const name = target.getAttribute('data-name')
+    if (name) {
+      e.stopPropagation()
+      _onClick?.(name, [])
+    }
+  })
 
   layer.appendChild(routesG)
   layer.appendChild(stopsG)
 }
 
 // ── Metro layer ───────────────────────────────────────────────────────────────
-
-function routeColor(network: Network, lineId: string): string {
-  return network.metro.routes.find(r => r.id === lineId)?.color ?? '#888'
-}
 
 function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
   const layer = svg.querySelector('.metro-layer') as SVGGElement
@@ -156,10 +255,11 @@ function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
       const poly = document.createElementNS(SVG_NS, 'polyline')
       poly.setAttribute('points', pts.map(([x, y]) => `${x},${y}`).join(' '))
       poly.setAttribute('fill', 'none')
-      poly.setAttribute('stroke', route.color)
-      poly.setAttribute('stroke-width', '5')
+      poly.setAttribute('stroke', '#444')
+      poly.setAttribute('stroke-width', '2')
       poly.setAttribute('stroke-linecap', 'round')
       poly.setAttribute('stroke-linejoin', 'round')
+      poly.setAttribute('opacity', '0.35')
       poly.setAttribute('class', `metro-line metro-line-${route.id}`)
       linesG.appendChild(poly)
     }
@@ -169,10 +269,37 @@ function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
   const stationsG = document.createElementNS(SVG_NS, 'g')
   stationsG.setAttribute('class', 'metro-stations')
 
-  for (const stop of network.metro.stops) {
-    const lineIds = stop.lineIds.length > 0 ? stop.lineIds : (INTERCHANGES[stop.name] ?? [])
-    const isInterchange = lineIds.length > 1
-    const [sx, sy] = project(stop.lon, stop.lat)
+  // Pre-project all metro stops for nearest-neighbor computation
+  interface ProjectedMetroStop extends MetroStop {
+    pos: [number, number]
+    resolvedLineIds: string[]
+    threshold: number
+  }
+  const projectedStops: ProjectedMetroStop[] = network.metro.stops.map(s => ({
+    ...s,
+    pos: project(s.lon, s.lat),
+    resolvedLineIds: s.lineIds.length > 0 ? s.lineIds : (INTERCHANGES[s.name] ?? []),
+    threshold: 0,
+  }))
+
+  for (const stop of projectedStops) {
+    const [sx, sy] = stop.pos
+    let minDistSq = Infinity
+    for (const other of projectedStops) {
+      if (other === stop) continue
+      const dx = sx - other.pos[0], dy = sy - other.pos[1]
+      const dSq = dx * dx + dy * dy
+      if (dSq < minDistSq) minDistSq = dSq
+    }
+    const minDist = Math.sqrt(minDistSq)
+    const base = minDist * 20
+    const isInterchange = stop.resolvedLineIds.length > 1
+    stop.threshold = Math.min(1050, isInterchange ? base * 2.5 : base)
+  }
+
+  for (const stop of projectedStops) {
+    const [sx, sy] = stop.pos
+    const isInterchange = stop.resolvedLineIds.length > 1
 
     const g = document.createElementNS(SVG_NS, 'g')
     g.setAttribute('class', `metro-station${isInterchange ? ' metro-interchange' : ''}`)
@@ -180,48 +307,24 @@ function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
     g.style.cursor = 'pointer'
     g.addEventListener('click', e => {
       e.stopPropagation()
-      _onClick?.(stop.name, lineIds)
+      _onClick?.(stop.name, stop.resolvedLineIds)
     })
 
-    if (isInterchange) {
-      const ring = document.createElementNS(SVG_NS, 'circle')
-      ring.setAttribute('cx', String(sx))
-      ring.setAttribute('cy', String(sy))
-      ring.setAttribute('r', '7')
-      ring.setAttribute('fill', '#fff')
-      ring.setAttribute('stroke', '#222')
-      ring.setAttribute('stroke-width', '1.5')
-      g.appendChild(ring)
+    const dot = document.createElementNS(SVG_NS, 'circle')
+    dot.setAttribute('cx', String(sx))
+    dot.setAttribute('cy', String(sy))
+    dot.setAttribute('r', '2')
+    dot.setAttribute('fill', '#555')
+    dot.setAttribute('pointer-events', 'none')
+    g.appendChild(dot)
 
-      lineIds.forEach((lid, i) => {
-        const angle = (i / lineIds.length) * Math.PI * 2 - Math.PI / 2
-        const dot = document.createElementNS(SVG_NS, 'circle')
-        dot.setAttribute('cx', String(sx + Math.cos(angle) * 3))
-        dot.setAttribute('cy', String(sy + Math.sin(angle) * 3))
-        dot.setAttribute('r', '2.5')
-        dot.setAttribute('fill', routeColor(network, lid))
-        g.appendChild(dot)
-      })
-    } else {
-      const color = routeColor(network, lineIds[0] ?? '')
-      const dot = document.createElementNS(SVG_NS, 'circle')
-      dot.setAttribute('cx', String(sx))
-      dot.setAttribute('cy', String(sy))
-      dot.setAttribute('r', '4')
-      dot.setAttribute('fill', color)
-      dot.setAttribute('stroke', '#111')
-      dot.setAttribute('stroke-width', '1.5')
-      g.appendChild(dot)
-    }
-
-    const label = document.createElementNS(SVG_NS, 'text')
-    label.setAttribute('x', String(sx + 6))
+    const label = document.createElementNS(SVG_NS, 'text') as SVGTextElement
+    label.setAttribute('x', String(sx + 5))
     label.setAttribute('y', String(sy + 3))
-    label.setAttribute('font-size', '7')
-    label.setAttribute('fill', '#e8e8e8')
-    label.setAttribute('pointer-events', 'none')
+    label.setAttribute('class', 'station-label')
     label.textContent = stop.name
     g.appendChild(label)
+    _labels.push({ el: label, threshold: stop.threshold })
 
     stationsG.appendChild(g)
   }

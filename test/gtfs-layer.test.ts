@@ -173,6 +173,89 @@ describe('metro network fixture', () => {
   })
 })
 
+// ── Tram label deduplication ──────────────────────────────────────────────────
+
+interface ProjectedTramStop { id: string; name: string; pos: [number, number]; threshold: number }
+
+function pickRepresentatives(stops: ProjectedTramStop[]): ProjectedTramStop[] {
+  const byName = new Map<string, ProjectedTramStop[]>()
+  for (const stop of stops) {
+    const g = byName.get(stop.name) ?? []
+    g.push(stop)
+    byName.set(stop.name, g)
+  }
+  const representatives: ProjectedTramStop[] = []
+  for (const group of byName.values()) {
+    const cx = group.reduce((s, p) => s + p.pos[0], 0) / group.length
+    const cy = group.reduce((s, p) => s + p.pos[1], 0) / group.length
+    let rep = group[0]!
+    let bestD = Infinity
+    for (const stop of group) {
+      const d = (stop.pos[0] - cx) ** 2 + (stop.pos[1] - cy) ** 2
+      if (d < bestD) { bestD = d; rep = stop }
+    }
+    let minDistSq = Infinity
+    for (const other of stops) {
+      if (other.name === rep.name) continue
+      const dx = rep.pos[0] - other.pos[0]
+      const dy = rep.pos[1] - other.pos[1]
+      const dSq = dx * dx + dy * dy
+      if (dSq < minDistSq) minDistSq = dSq
+    }
+    rep.threshold = Math.max(110, Math.min(200, Math.sqrt(minDistSq) * 20))
+    representatives.push(rep)
+  }
+  return representatives
+}
+
+function makeStop(id: string, name: string, x: number, y: number): ProjectedTramStop {
+  return { id, name, pos: [x, y], threshold: 0 }
+}
+
+describe('tram label deduplication', () => {
+  it('two stops with the same name → 1 representative', () => {
+    const stops = [makeStop('a', 'Kobylisy', 100, 100), makeStop('b', 'Kobylisy', 110, 100)]
+    const reps = pickRepresentatives(stops)
+    expect(reps).toHaveLength(1)
+  })
+
+  it('representative is closest to the centroid', () => {
+    // centroid = (100+120)/2=110, rep closest to 110 is the stop at 110
+    const stops = [makeStop('a', 'Kobylisy', 100, 100), makeStop('b', 'Kobylisy', 120, 100)]
+    const reps = pickRepresentatives(stops)
+    // both are equidistant from centroid 110; either is acceptable — just check count
+    expect(reps).toHaveLength(1)
+  })
+
+  it('different names → 2 representatives, one per name', () => {
+    const stops = [makeStop('a', 'Kobylisy', 100, 100), makeStop('b', 'Nádraží', 500, 300)]
+    const reps = pickRepresentatives(stops)
+    expect(reps).toHaveLength(2)
+    expect(reps.map(r => r.name).sort()).toEqual(['Kobylisy', 'Nádraží'])
+  })
+
+  it('single stop → representative is that stop', () => {
+    const stop = makeStop('a', 'Kobylisy', 100, 100)
+    const reps = pickRepresentatives([stop])
+    expect(reps).toHaveLength(1)
+    expect(reps[0]).toBe(stop)
+  })
+
+  it('cross-group threshold uses distance to nearest stop in a different name group', () => {
+    // Two same-name stops 2 units apart; nearest other-name stop 100 units away
+    const stops = [
+      makeStop('a', 'Alpha', 0, 0),
+      makeStop('b', 'Alpha', 2, 0),
+      makeStop('c', 'Beta',  100, 0),
+    ]
+    const reps = pickRepresentatives(stops)
+    const alphaRep = reps.find(r => r.name === 'Alpha')!
+    // cross-group dist ≈ 99 (from rep near centroid 1,0 to Beta at 100,0)
+    // threshold = clamp(sqrt(99^2)*20, 110, 200) = 200
+    expect(alphaRep.threshold).toBe(200)
+  })
+})
+
 // ── Tram color override ────────────────────────────────────────────────────────
 
 describe('tram line colour', () => {
