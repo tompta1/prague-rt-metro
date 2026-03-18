@@ -52,7 +52,7 @@ const _labels: Array<{ el: SVGTextElement; threshold: number }> = []
 
 export function updateLabels(vbWidth: number): void {
   for (const { el, threshold } of _labels) {
-    el.classList.toggle('label-visible', vbWidth < threshold)
+    el.style.opacity = vbWidth < threshold ? '1' : '0'
   }
 }
 
@@ -208,7 +208,11 @@ function renderTramLayer(svg: SVGSVGElement, network: Network): void {
       const label = document.createElementNS(SVG_NS, 'text') as SVGTextElement
       label.setAttribute('x', String(x + 3))
       label.setAttribute('y', String(y + 2))
-      label.setAttribute('class', 'tram-stop-label')
+      label.setAttribute('font-size', '5')
+      label.setAttribute('fill', '#666')
+      label.setAttribute('pointer-events', 'none')
+      label.style.opacity = '0'
+      label.style.transition = 'opacity 0.2s'
       label.textContent = stop.name
       stopsG.appendChild(label)
       _labels.push({ el: label, threshold: stop.threshold })
@@ -312,7 +316,11 @@ function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
     const label = document.createElementNS(SVG_NS, 'text') as SVGTextElement
     label.setAttribute('x', String(sx + 5))
     label.setAttribute('y', String(sy + 3))
-    label.setAttribute('class', 'station-label')
+    label.setAttribute('font-size', '7')
+    label.setAttribute('fill', '#bbb')
+    label.setAttribute('pointer-events', 'none')
+    label.style.opacity = '0'
+    label.style.transition = 'opacity 0.2s'
     label.textContent = stop.name
     g.appendChild(label)
     _labels.push({ el: label, threshold: stop.threshold })

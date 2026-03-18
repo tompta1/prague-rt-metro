@@ -45,17 +45,13 @@ html, body {
   height: 100%;
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .map-svg:active {
   cursor: grabbing;
 }
 
-.station-label {
-  font-size: 9px;
-  fill: var(--text);
-  pointer-events: none;
-}
 
 .terminus-label {
   font-size: 9px;
@@ -206,14 +202,9 @@ html, body {
 /* ── Vehicle markers ─────────────────────────────────────────────────────── */
 
 .vehicle-marker {
-  opacity: 0.95;
-  filter: drop-shadow(0 0 3px rgba(0,0,0,0.8));
+  opacity: 0.92;
+  filter: drop-shadow(0 0 4px rgba(0,0,0,0.6));
 }
-
-.delay-on-time  { stroke: var(--delay-on-time);  stroke-width: 2; }
-.delay-slight   { stroke: var(--delay-slight);   stroke-width: 2; }
-.delay-late     { stroke: var(--delay-late);     stroke-width: 2.5; }
-.delay-unknown  { stroke: var(--delay-unknown);  stroke-width: 1.5; }
 
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 
