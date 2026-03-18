@@ -35,6 +35,7 @@ html, body {
 
 .map-container {
   flex: 1;
+  min-height: 0;   /* allow flex child to shrink below content size */
   position: relative;
   overflow: hidden;
 }
@@ -42,6 +43,12 @@ html, body {
 .map-svg {
   width: 100%;
   height: 100%;
+  cursor: grab;
+  user-select: none;
+}
+
+.map-svg:active {
+  cursor: grabbing;
 }
 
 .station-label {
@@ -50,17 +57,163 @@ html, body {
   pointer-events: none;
 }
 
+.terminus-label {
+  font-size: 9px;
+  font-weight: 700;
+  fill: #fff;
+  pointer-events: none;
+}
+
+.line-terminus {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+/* ── Departure panel ─────────────────────────────────────────────────────── */
+
+.departure-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  z-index: 20;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.departure-panel.hidden {
+  display: none;
+}
+
+.departure-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #222;
+  border-bottom: 1px solid #333;
+}
+
+.departure-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.departure-panel__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.departure-panel__close:hover {
+  color: var(--text);
+}
+
+.departure-panel__list {
+  padding: 6px 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.departure-panel__empty {
+  padding: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.departure-panel__status {
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 10px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.departure-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto 10px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.departure-row:hover {
+  background: #252525;
+}
+
+.departure-row__dest {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.departure-row__time {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.departure-row__delay {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.departure-row__delay.delay-on-time { background: var(--delay-on-time); }
+.departure-row__delay.delay-slight  { background: var(--delay-slight); }
+.departure-row__delay.delay-late    { background: var(--delay-late); }
+.departure-row__delay.delay-unknown { background: var(--delay-unknown); }
+
+/* ── Line badge (shared) ─────────────────────────────────────────────────── */
+
+.line-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+/* ── Tram layer ──────────────────────────────────────────────────────────── */
+
+.tram-route {
+  transition: opacity 0.2s;
+}
+
+.tram-layer.hidden .tram-routes {
+  display: none;
+}
+
+.tram-layer.stops-hidden .tram-stops {
+  display: none;
+}
+
 /* ── Vehicle markers ─────────────────────────────────────────────────────── */
 
 .vehicle-marker {
-  transition: cx 1s ease, cy 1s ease;
-  opacity: 0.9;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.8));
 }
 
-.delay-on-time  { stroke: var(--delay-on-time);  stroke-width: 1.5; }
-.delay-slight   { stroke: var(--delay-slight);   stroke-width: 1.5; }
-.delay-late     { stroke: var(--delay-late);     stroke-width: 2;   }
-.delay-unknown  { stroke: var(--delay-unknown);  stroke-width: 1;   }
+.delay-on-time  { stroke: var(--delay-on-time);  stroke-width: 2; }
+.delay-slight   { stroke: var(--delay-slight);   stroke-width: 2; }
+.delay-late     { stroke: var(--delay-late);     stroke-width: 2.5; }
+.delay-unknown  { stroke: var(--delay-unknown);  stroke-width: 1.5; }
 
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 

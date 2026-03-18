@@ -1,9 +1,9 @@
 // ── Static network types ─────────────────────────────────────────────────────
 
 export interface Line {
-  id: string        // e.g. "A", "B", "C", "1", "22"
+  id: string
   name: string
-  color: string     // CSS hex
+  color: string
   type: 'metro' | 'tram'
 }
 
@@ -11,7 +11,6 @@ export interface Station {
   id: string
   name: string
   lineIds: string[]
-  /** Schematic SVG coordinates */
   x: number
   y: number
   isInterchange: boolean
@@ -22,7 +21,6 @@ export interface Segment {
   lineId: string
   fromStationId: string
   toStationId: string
-  /** Intermediate schematic SVG waypoints */
   waypoints: Array<{ x: number; y: number }>
 }
 
@@ -34,13 +32,38 @@ export interface Vehicle {
   id: string
   tripId: string
   lineId: string
-  /** Progress along route 0–1 */
+  /** Canonical progress 0–1 (0=north/west terminus, 1=south/east terminus) */
   progress: number
   /** Delay in seconds, undefined if unknown */
   delaySec?: number
   delayStatus: DelayStatus
+  /** Trip headsign (destination terminal) */
+  headsign: string
   /** ISO timestamp of last position update */
   updatedAt: string
+}
+
+// ── Departure board ───────────────────────────────────────────────────────────
+
+export interface Departure {
+  line: string
+  headsign: string
+  predictedAt: string
+  delaySec: number
+}
+
+export interface GolemioDeparture {
+  departure_timestamp: {
+    scheduled: string
+    predicted: string
+  }
+  delay: { is_available: boolean; seconds: number } | null
+  route: { short_name: string; type: number }
+  trip: { headsign: string }
+}
+
+export interface GolemioDepartureResponse {
+  departures: GolemioDeparture[]
 }
 
 // ── API response shapes (Golemio /v2/vehiclepositions) ───────────────────────
@@ -52,13 +75,13 @@ export interface GolemioVehicle {
       gtfs: {
         trip_id: string
         route_short_name: string
-        shape_dist_traveled: number
+        trip_headsign: string | null
       }
     }
     last_position: {
-      delay: number | null
-      last_stop_arrival_delay: number | null
-      updated_at: string
+      delay: { actual: number | null; last_stop_arrival: number | null } | null
+      origin_timestamp: string | null
+      shape_dist_traveled: string | null
     }
   }
 }

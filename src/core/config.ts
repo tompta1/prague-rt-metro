@@ -4,8 +4,8 @@ export const PROXY_BASE_URL =
 
 export const API = {
   vehiclePositions: `${PROXY_BASE_URL}/api/vehicle-positions`,
-  departures: (stopId: string) =>
-    `${PROXY_BASE_URL}/api/departures?stopId=${encodeURIComponent(stopId)}`,
+  departures: (stationName: string) =>
+    `${PROXY_BASE_URL}/api/departures?name=${encodeURIComponent(stationName)}`,
 } as const
 
 /** Vehicle positions polling interval in ms */

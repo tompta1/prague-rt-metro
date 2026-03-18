@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -26,6 +26,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Generate tram network
+        run: npm run build:network
 
       - name: Build
         run: npm run build

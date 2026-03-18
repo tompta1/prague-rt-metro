@@ -1,11 +1,13 @@
 import '@/styles/main.css'
-import { createMapSVG, updateVehicles } from '@/map/renderer'
+import { createMapSVG, setVehicleTargets, startAnimation } from '@/map/renderer'
+import { initGtfsLayer, onStationClick } from '@/map/gtfs-layer'
 import { subscribe, startPolling } from '@/data/store'
-import type { Vehicle } from '@/types'
+import { fetchDepartures } from '@/data/fetcher'
+import { DeparturePanel } from '@/ui/panel'
 
 const app = document.getElementById('app')!
 
-// ── Layout ───────────────────────────────────────────────────────────────────
+// ── Layout ────────────────────────────────────────────────────────────────────
 
 const mapContainer = document.createElement('div')
 mapContainer.className = 'map-container'
@@ -29,22 +31,44 @@ mapContainer.appendChild(loadingOverlay)
 app.appendChild(mapContainer)
 app.appendChild(statusBar)
 
-// ── Map ──────────────────────────────────────────────────────────────────────
+// ── Map ───────────────────────────────────────────────────────────────────────
 
 const svg = createMapSVG(mapContainer)
+startAnimation()
+void initGtfsLayer(svg)
 
-// ── Realtime ─────────────────────────────────────────────────────────────────
+// ── Departure panel ───────────────────────────────────────────────────────────
+
+const panel = new DeparturePanel(mapContainer, fetchDepartures)
+
+onStationClick((name, lineIds) => {
+  panel.show(name, lineIds)
+})
+
+svg.addEventListener('click', e => {
+  if ((e.target as Element).closest('.metro-station') === null) {
+    panel.hide()
+  }
+})
+
+// ── Realtime ──────────────────────────────────────────────────────────────────
 
 let firstUpdate = true
 
-subscribe((vehicles: Vehicle[]) => {
-  if (firstUpdate) {
+subscribe((vehicles, error) => {
+  if (firstUpdate && (vehicles.length > 0 || error)) {
     firstUpdate = false
     loadingOverlay.classList.add('hidden')
-    statusBar.classList.remove('error')
   }
-  updateVehicles(svg, vehicles)
-  statusText.textContent = `${vehicles.length} vehicles · updated ${new Date().toLocaleTimeString()}`
+
+  if (error) {
+    statusBar.classList.add('error')
+    statusText.textContent = `Connection error · ${new Date().toLocaleTimeString()}`
+  } else {
+    statusBar.classList.remove('error')
+    setVehicleTargets(svg, vehicles)
+    statusText.textContent = `${vehicles.length} vehicles · updated ${new Date().toLocaleTimeString()}`
+  }
 })
 
 startPolling()
