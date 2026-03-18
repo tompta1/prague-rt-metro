@@ -305,6 +305,14 @@ function renderMetroLayer(svg: SVGSVGElement, network: Network): void {
       _onClick?.(stop.name, stop.resolvedLineIds)
     })
 
+    // Transparent hit area — ensures elementFromPoint returns this element on mobile tap
+    const hit = document.createElementNS(SVG_NS, 'circle')
+    hit.setAttribute('cx', String(sx))
+    hit.setAttribute('cy', String(sy))
+    hit.setAttribute('r', '8')
+    hit.setAttribute('fill', 'transparent')
+    g.appendChild(hit)
+
     const dot = document.createElementNS(SVG_NS, 'circle')
     dot.setAttribute('cx', String(sx))
     dot.setAttribute('cy', String(sy))
