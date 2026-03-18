@@ -3,7 +3,7 @@ import type { Departure, GolemioDeparture, GolemioDepartureResponse, GolemioVehi
 import { API } from '@/core/config'
 import { toCanonicalProgress, LINE_TOTAL_KM } from '@/map/network'
 
-const KNOWN_LINE_IDS = new Set(Object.keys(LINE_TOTAL_KM))  // A, B, C
+const METRO_LINE_IDS = new Set(Object.keys(LINE_TOTAL_KM))  // A, B, C
 const FETCH_TIMEOUT_MS = 12_000
 const RETRY_DELAY_MS = 2_000
 
@@ -39,21 +39,45 @@ async function fetchOnce(): Promise<Vehicle[]> {
 
   const data: GolemioVehiclePositionsResponse = await res.json()
 
-  return data.features.flatMap(f => {
+  return data.features.flatMap((f): Vehicle[] => {
     const gtfs = f.properties.trip.gtfs
     const pos = f.properties.last_position
     const lineId = gtfs.route_short_name
+    const routeType = gtfs.route_type
 
-    if (!KNOWN_LINE_IDS.has(lineId)) return []
+    // 1 = metro, 0 = tram; skip buses (3), trains (2), etc.
+    const isTram = routeType === 0
+    const isMetro = routeType === 1
+
+    if (!isTram && !isMetro) return []
+    if (isMetro && !METRO_LINE_IDS.has(lineId)) return []
 
     const headsign = gtfs.trip_headsign ?? ''
-    const shapeDistKm = parseFloat(pos.shape_dist_traveled ?? '0')
     const delaySec = pos.delay?.actual ?? pos.delay?.last_stop_arrival ?? undefined
 
+    if (isTram) {
+      const [lon, lat] = f.geometry.coordinates
+      return [{
+        id: gtfs.trip_id,
+        tripId: gtfs.trip_id,
+        lineId,
+        type: 'tram' as const,
+        progress: 0,
+        geoPos: [lon, lat] as [number, number],
+        headsign,
+        delaySec: delaySec ?? undefined,
+        delayStatus: classifyDelay(delaySec),
+        updatedAt: pos.origin_timestamp ?? '',
+      }]
+    }
+
+    // Metro: use shape_dist_traveled for progress along the line
+    const shapeDistKm = parseFloat(pos.shape_dist_traveled ?? '0')
     return [{
       id: gtfs.trip_id,
       tripId: gtfs.trip_id,
       lineId,
+      type: 'metro' as const,
       headsign,
       progress: toCanonicalProgress(lineId, headsign, shapeDistKm),
       delaySec: delaySec ?? undefined,

@@ -32,8 +32,11 @@ export interface Vehicle {
   id: string
   tripId: string
   lineId: string
-  /** Canonical progress 0–1 (0=north/west terminus, 1=south/east terminus) */
+  type: 'metro' | 'tram'
+  /** Canonical progress 0–1 — set for metro, 0 for trams (use geoPos instead) */
   progress: number
+  /** GPS position [lon, lat] — set for trams, undefined for metro */
+  geoPos?: [number, number]
   /** Delay in seconds, undefined if unknown */
   delaySec?: number
   delayStatus: DelayStatus
@@ -75,6 +78,7 @@ export interface GolemioVehicle {
       gtfs: {
         trip_id: string
         route_short_name: string
+        route_type: number
         trip_headsign: string | null
       }
     }

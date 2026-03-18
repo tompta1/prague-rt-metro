@@ -38,29 +38,25 @@ function makeGeoJSON(features: ReturnType<typeof makeFeature>[]) {
 // ── Upstream query parameters ─────────────────────────────────────────────────
 
 describe('vehicle-positions upstream query', () => {
-  it('requests only metro route short names A, B, C', async () => {
-    // The UPSTREAM_PARAMS string must target metro lines specifically.
-    // Dynamically import so we read the live source value.
+  // Golemio does not support routeType or multiple routeShortName params.
+  // The handler fetches all vehicles with a high limit and relies on
+  // client-side filtering by route_type to keep only metro + trams.
+
+  it('uses a high limit (≥1000) to capture all trams and metro at peak hours', async () => {
     const src = await import('fs').then(fs =>
       fs.readFileSync(new URL('../api/vehicle-positions.ts', import.meta.url).pathname, 'utf8')
     )
-    expect(src).toContain('routeShortName=A')
-    expect(src).toContain('routeShortName=B')
-    expect(src).toContain('routeShortName=C')
+    const match = src.match(/limit=(\d+)/)
+    expect(match).not.toBeNull()
+    expect(Number(match![1])).toBeGreaterThanOrEqual(1000)
   })
 
-  it('does NOT use a blanket limit=500 without line filtering', async () => {
+  it('does not use routeShortName filtering (Golemio rejects repeated params)', async () => {
     const src = await import('fs').then(fs =>
       fs.readFileSync(new URL('../api/vehicle-positions.ts', import.meta.url).pathname, 'utf8')
     )
-    // If we have routeShortName filters, limit=500 is no longer needed;
-    // a lower limit is acceptable. Must not use 500 without metro filters.
-    const hasFilter = src.includes('routeShortName=A')
-    if (!hasFilter) {
-      // No filter → must have a reasonable limit warning (fail the test)
-      expect(src).not.toContain('limit=500')
-    }
-    expect(hasFilter).toBe(true)
+    // routeShortName=A repeated causes HTTP 400; comma-separated returns empty
+    expect(src).not.toMatch(/routeShortName=A.*routeShortName=B/)
   })
 })
 
@@ -103,18 +99,22 @@ describe('Golemio vehiclepositions response shape', () => {
 })
 
 // ── Fetcher filtering logic (pure, no network) ────────────────────────────────
-// Extract and test the filtering logic that the fetcher applies after receiving data.
+// route_type: 0=tram, 1=metro, 2=train, 3=bus
 
-function filterAndMapFeatures(
-  features: ReturnType<typeof makeFeature>[],
-  knownLineIds: Set<string>,
-) {
+const METRO_LINE_IDS = new Set(['A', 'B', 'C'])
+
+function filterAndMapFeatures(features: ReturnType<typeof makeFeature>[]) {
   return features.flatMap(f => {
     const gtfs = f.properties.trip.gtfs
-    if (!knownLineIds.has(gtfs.route_short_name)) return []
+    const routeType = gtfs.route_type
+    const isTram = routeType === 0
+    const isMetro = routeType === 1
+    if (!isTram && !isMetro) return []
+    if (isMetro && !METRO_LINE_IDS.has(gtfs.route_short_name)) return []
     return [{
       tripId: gtfs.trip_id,
       lineId: gtfs.route_short_name,
+      type: isTram ? 'tram' : 'metro',
       headsign: gtfs.trip_headsign ?? '',
       shapeDistKm: f.properties.last_position.shape_dist_traveled,
       delaySec: f.properties.last_position.delay.actual ?? undefined,
@@ -123,55 +123,58 @@ function filterAndMapFeatures(
 }
 
 describe('fetcher filtering logic', () => {
-  const METRO_LINES = new Set(['A', 'B', 'C'])
-
-  it('keeps metro vehicles', () => {
+  it('keeps metro vehicles (route_type=1) for lines A, B, C', () => {
     const features = [makeFeature('A', 1), makeFeature('B', 1), makeFeature('C', 1)]
-    const result = filterAndMapFeatures(features, METRO_LINES)
+    const result = filterAndMapFeatures(features)
     expect(result).toHaveLength(3)
-    expect(result.map(v => v.lineId)).toEqual(['A', 'B', 'C'])
+    expect(result.every(v => v.type === 'metro')).toBe(true)
   })
 
-  it('drops tram vehicles (route_type=0)', () => {
+  it('keeps tram vehicles (route_type=0) with type=tram', () => {
     const features = [makeFeature('5', 0), makeFeature('22', 0)]
-    const result = filterAndMapFeatures(features, METRO_LINES)
-    expect(result).toHaveLength(0)
+    const result = filterAndMapFeatures(features)
+    expect(result).toHaveLength(2)
+    expect(result.every(v => v.type === 'tram')).toBe(true)
   })
 
-  it('drops bus vehicles', () => {
+  it('drops bus vehicles (route_type=3)', () => {
     const features = [makeFeature('136', 3), makeFeature('207', 3)]
-    const result = filterAndMapFeatures(features, METRO_LINES)
-    expect(result).toHaveLength(0)
+    expect(filterAndMapFeatures(features)).toHaveLength(0)
   })
 
-  it('mixed batch: only metro vehicles survive', () => {
+  it('drops train vehicles (route_type=2)', () => {
+    expect(filterAndMapFeatures([makeFeature('S1', 2)])).toHaveLength(0)
+  })
+
+  it('mixed batch: metro and trams kept, buses dropped', () => {
     const features = [
-      makeFeature('5', 0),   // tram — dropped
+      makeFeature('22', 0),  // tram — kept
       makeFeature('A', 1),   // metro — kept
       makeFeature('136', 3), // bus — dropped
       makeFeature('C', 1),   // metro — kept
     ]
-    const result = filterAndMapFeatures(features, METRO_LINES)
-    expect(result).toHaveLength(2)
-    expect(result[0].lineId).toBe('A')
-    expect(result[1].lineId).toBe('C')
+    const result = filterAndMapFeatures(features)
+    expect(result).toHaveLength(3)
+    expect(result.map(v => v.type)).toEqual(['tram', 'metro', 'metro'])
+  })
+
+  it('metro vehicle with unknown line ID is dropped', () => {
+    expect(filterAndMapFeatures([makeFeature('X', 1)])).toHaveLength(0)
   })
 
   it('preserves shape_dist_traveled value', () => {
-    const features = [makeFeature('A', 1, 12.3)]
-    const result = filterAndMapFeatures(features, METRO_LINES)
-    expect(result[0].shapeDistKm).toBeCloseTo(12.3)
+    const result = filterAndMapFeatures([makeFeature('A', 1, 12.3)])
+    expect(result[0]!.shapeDistKm).toBeCloseTo(12.3)
   })
 
   it('preserves delay value', () => {
     const features = [makeFeature('B', 1)]
-    features[0].properties.last_position.delay.actual = 120
-    const result = filterAndMapFeatures(features, METRO_LINES)
-    expect(result[0].delaySec).toBe(120)
+    features[0]!.properties.last_position.delay.actual = 120
+    expect(filterAndMapFeatures(features)[0]!.delaySec).toBe(120)
   })
 
   it('empty features array returns empty result', () => {
-    expect(filterAndMapFeatures([], METRO_LINES)).toEqual([])
+    expect(filterAndMapFeatures([])).toEqual([])
   })
 })
 

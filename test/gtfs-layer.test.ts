@@ -1,5 +1,86 @@
 import { describe, it, expect } from 'vitest'
 
+// ── Pure vehicle-parsing logic (mirrors fetcher.ts) ───────────────────────────
+
+interface GolemioFeature {
+  geometry: { coordinates: [number, number] }
+  properties: {
+    trip: { gtfs: { trip_id: string; route_short_name: string; route_type: number; trip_headsign: string | null } }
+    last_position: { delay: { actual: number | null; last_stop_arrival: number | null } | null; origin_timestamp: string | null; shape_dist_traveled: string | null }
+  }
+}
+
+const METRO_LINE_IDS = new Set(['A', 'B', 'C'])
+
+function parseVehicle(f: GolemioFeature) {
+  const gtfs = f.properties.trip.gtfs
+  const pos = f.properties.last_position
+  const lineId = gtfs.route_short_name
+  const routeType = gtfs.route_type
+  const isTram = routeType === 0
+  const isMetro = routeType === 1
+  if (!isTram && !isMetro) return null
+  if (isMetro && !METRO_LINE_IDS.has(lineId)) return null
+  const headsign = gtfs.trip_headsign ?? ''
+  const delaySec = pos.delay?.actual ?? pos.delay?.last_stop_arrival ?? undefined
+  if (isTram) {
+    const [lon, lat] = f.geometry.coordinates
+    return { tripId: gtfs.trip_id, lineId, type: 'tram' as const, progress: 0, geoPos: [lon, lat] as [number, number], headsign, delaySec, updatedAt: pos.origin_timestamp ?? '' }
+  }
+  return { tripId: gtfs.trip_id, lineId, type: 'metro' as const, headsign, delaySec, updatedAt: pos.origin_timestamp ?? '' }
+}
+
+function makeFeature(routeShortName: string, routeType: number, lon = 14.4, lat = 50.08): GolemioFeature {
+  return {
+    geometry: { coordinates: [lon, lat] },
+    properties: {
+      trip: { gtfs: { trip_id: `trip-${routeShortName}`, route_short_name: routeShortName, route_type: routeType, trip_headsign: 'Test' } },
+      last_position: { delay: null, origin_timestamp: '2024-01-01T12:00:00Z', shape_dist_traveled: '5.5' },
+    },
+  }
+}
+
+describe('vehicle filtering (fetcher logic)', () => {
+  it('route_type=1 metro A/B/C → type=metro', () => {
+    for (const line of ['A', 'B', 'C']) {
+      const v = parseVehicle(makeFeature(line, 1))
+      expect(v?.type).toBe('metro')
+      expect(v?.lineId).toBe(line)
+    }
+  })
+
+  it('route_type=0 → type=tram with geoPos', () => {
+    const v = parseVehicle(makeFeature('22', 0, 14.42, 50.07))
+    expect(v?.type).toBe('tram')
+    expect(v?.geoPos).toEqual([14.42, 50.07])
+    expect(v?.progress).toBe(0)
+  })
+
+  it('route_type=3 (bus) → filtered out', () => {
+    expect(parseVehicle(makeFeature('135', 3))).toBeNull()
+  })
+
+  it('route_type=2 (train) → filtered out', () => {
+    expect(parseVehicle(makeFeature('S1', 2))).toBeNull()
+  })
+
+  it('metro with unknown line ID → filtered out', () => {
+    expect(parseVehicle(makeFeature('X', 1))).toBeNull()
+  })
+
+  it('tram preserves GPS coordinates exactly', () => {
+    const v = parseVehicle(makeFeature('9', 0, 14.3001, 50.0999))
+    expect(v?.geoPos?.[0]).toBeCloseTo(14.3001)
+    expect(v?.geoPos?.[1]).toBeCloseTo(50.0999)
+  })
+
+  it('headsign falls back to empty string when null', () => {
+    const f = makeFeature('A', 1)
+    f.properties.trip.gtfs.trip_headsign = null
+    expect(parseVehicle(f)?.headsign).toBe('')
+  })
+})
+
 // ── Pure logic extracted from gtfs-layer.ts ───────────────────────────────────
 // Tests run in Node without a DOM, so we duplicate the pure functions here.
 
