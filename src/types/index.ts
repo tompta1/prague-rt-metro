@@ -32,10 +32,10 @@ export interface Vehicle {
   id: string
   tripId: string
   lineId: string
-  type: 'metro' | 'tram'
-  /** Canonical progress 0–1 — set for metro, 0 for trams (use geoPos instead) */
+  type: 'metro' | 'tram' | 'bus' | 'rail' | 'trolleybus' | 'ferry' | 'other'
+  /** Canonical progress 0–1 — set for metro, 0 for trams/buses (use geoPos instead) */
   progress: number
-  /** GPS position [lon, lat] — set for trams, undefined for metro */
+  /** GPS position [lon, lat] — set for trams and buses, undefined for metro */
   geoPos?: [number, number]
   /** Delay in seconds, undefined if unknown */
   delaySec?: number

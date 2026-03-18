@@ -61,23 +61,22 @@ async function fetchOnce(signal?: AbortSignal): Promise<Vehicle[]> {
     const lineId = gtfs.route_short_name
     const routeType = gtfs.route_type
 
-    // 1 = metro, 0 = tram; skip buses (3), trains (2), etc.
-    const isTram = routeType === 0
     const isMetro = routeType === 1
+    const type = routeTypeToVehicleType(routeType)
 
-    if (!isTram && !isMetro) return []
+    // Metro with unknown line ID (not A/B/C) — drop
     if (isMetro && !METRO_LINE_IDS.has(lineId)) return []
 
     const headsign = gtfs.trip_headsign ?? ''
     const delaySec = pos.delay?.actual ?? pos.delay?.last_stop_arrival ?? undefined
 
-    if (isTram) {
+    if (!isMetro) {
       const [lon, lat] = f.geometry.coordinates
       return [{
         id: gtfs.trip_id,
         tripId: gtfs.trip_id,
         lineId,
-        type: 'tram' as const,
+        type,
         progress: 0,
         geoPos: [lon, lat] as [number, number],
         headsign,
@@ -101,6 +100,18 @@ async function fetchOnce(signal?: AbortSignal): Promise<Vehicle[]> {
       updatedAt: pos.origin_timestamp ?? '',
     }]
   })
+}
+
+function routeTypeToVehicleType(routeType: number): Vehicle['type'] {
+  switch (routeType) {
+    case 0:  return 'tram'
+    case 1:  return 'metro'
+    case 2:  return 'rail'
+    case 3:  return 'bus'
+    case 4:  return 'ferry'
+    case 11: return 'trolleybus'
+    default: return 'other'
+  }
 }
 
 function isValidVehiclePositionsResponse(data: unknown): data is GolemioVehiclePositionsResponse {

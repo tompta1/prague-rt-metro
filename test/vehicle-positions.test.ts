@@ -99,23 +99,35 @@ describe('Golemio vehiclepositions response shape', () => {
 })
 
 // ── Fetcher filtering logic (pure, no network) ────────────────────────────────
-// route_type: 0=tram, 1=metro, 2=train, 3=bus
+// route_type: 0=tram, 1=metro, 2=rail, 3=bus, 4=ferry, 11=trolleybus
 
 const METRO_LINE_IDS = new Set(['A', 'B', 'C'])
+
+function routeTypeToVehicleType(routeType: number): string {
+  switch (routeType) {
+    case 0:  return 'tram'
+    case 1:  return 'metro'
+    case 2:  return 'rail'
+    case 3:  return 'bus'
+    case 4:  return 'ferry'
+    case 11: return 'trolleybus'
+    default: return 'other'
+  }
+}
 
 function filterAndMapFeatures(features: ReturnType<typeof makeFeature>[]) {
   return features.flatMap(f => {
     const gtfs = f.properties.trip.gtfs
     const routeType = gtfs.route_type
-    const isTram = routeType === 0
     const isMetro = routeType === 1
-    if (!isTram && !isMetro) return []
     if (isMetro && !METRO_LINE_IDS.has(gtfs.route_short_name)) return []
+    const type = routeTypeToVehicleType(routeType)
     return [{
       tripId: gtfs.trip_id,
       lineId: gtfs.route_short_name,
-      type: isTram ? 'tram' : 'metro',
+      type,
       headsign: gtfs.trip_headsign ?? '',
+      geoPos: !isMetro ? f.geometry.coordinates as [number, number] : undefined,
       shapeDistKm: f.properties.last_position.shape_dist_traveled,
       delaySec: f.properties.last_position.delay.actual ?? undefined,
     }]
@@ -137,25 +149,30 @@ describe('fetcher filtering logic', () => {
     expect(result.every(v => v.type === 'tram')).toBe(true)
   })
 
-  it('drops bus vehicles (route_type=3)', () => {
+  it('keeps bus vehicles (route_type=3) with type=bus', () => {
     const features = [makeFeature('136', 3), makeFeature('207', 3)]
-    expect(filterAndMapFeatures(features)).toHaveLength(0)
+    const result = filterAndMapFeatures(features)
+    expect(result).toHaveLength(2)
+    expect(result.every(v => v.type === 'bus')).toBe(true)
   })
 
-  it('drops train vehicles (route_type=2)', () => {
-    expect(filterAndMapFeatures([makeFeature('S1', 2)])).toHaveLength(0)
+  it('keeps rail vehicles (route_type=2) with type=rail', () => {
+    const result = filterAndMapFeatures([makeFeature('S1', 2)])
+    expect(result).toHaveLength(1)
+    expect(result[0]!.type).toBe('rail')
   })
 
-  it('mixed batch: metro and trams kept, buses dropped', () => {
+  it('mixed batch: all types kept except unknown metro line IDs', () => {
     const features = [
       makeFeature('22', 0),  // tram — kept
       makeFeature('A', 1),   // metro — kept
-      makeFeature('136', 3), // bus — dropped
+      makeFeature('136', 3), // bus — kept
       makeFeature('C', 1),   // metro — kept
+      makeFeature('S1', 2),  // rail — kept
     ]
     const result = filterAndMapFeatures(features)
-    expect(result).toHaveLength(3)
-    expect(result.map(v => v.type)).toEqual(['tram', 'metro', 'metro'])
+    expect(result).toHaveLength(5)
+    expect(result.map(v => v.type)).toEqual(['tram', 'metro', 'bus', 'metro', 'rail'])
   })
 
   it('metro vehicle with unknown line ID is dropped', () => {
@@ -175,6 +192,25 @@ describe('fetcher filtering logic', () => {
 
   it('empty features array returns empty result', () => {
     expect(filterAndMapFeatures([])).toEqual([])
+  })
+})
+
+describe('bus filtering', () => {
+  it('buses (route_type=3) are kept and typed as bus', () => {
+    const result = filterAndMapFeatures([makeFeature('136', 3), makeFeature('207', 3)])
+    expect(result).toHaveLength(2)
+    expect(result.every(v => v.type === 'bus')).toBe(true)
+  })
+
+  it('buses get geoPos set from geometry coordinates', () => {
+    const result = filterAndMapFeatures([makeFeature('136', 3)])
+    expect(result[0]!.geoPos).toEqual([14.4, 50.08])
+  })
+
+  it('trolleybuses (route_type=11) are kept with type=trolleybus', () => {
+    const result = filterAndMapFeatures([makeFeature('51', 11)])
+    expect(result).toHaveLength(1)
+    expect(result[0]!.type).toBe('trolleybus')
   })
 })
 

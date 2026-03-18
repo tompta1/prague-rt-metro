@@ -3,8 +3,8 @@ import { setCors, handlePreflight, isAllowedOrigin } from './_cors'
 
 const GOLEMIO_URL = 'https://api.golemio.cz/v2/vehiclepositions'
 // Golemio has no route-type filter; fetch all vehicles and let the client filter by route_type.
-// limit=1500 comfortably covers all Prague trams (~300) + metro (~100) at peak hours.
-const UPSTREAM_PARAMS = 'limit=1500&includeNotTracking=false'
+// limit=3000 covers all Prague trams (~300), metro (~100), and city buses (~1500) at peak.
+const UPSTREAM_PARAMS = 'limit=3000&includeNotTracking=false'
 const UPSTREAM_TIMEOUT_MS = 8_000
 
 export default async function handler(

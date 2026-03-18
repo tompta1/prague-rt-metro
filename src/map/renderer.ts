@@ -64,7 +64,7 @@ export function createMapSVG(container: HTMLElement): SVGSVGElement {
 
 interface VehicleState {
   el: SVGCircleElement
-  type: 'metro' | 'tram'
+  type: Vehicle['type']
   lineId: string
   currProgress: number
   pollTime: number
@@ -90,8 +90,8 @@ export function setVehicleTargets(svg: SVGSVGElement, vehicles: Vehicle[]): void
 
   for (const v of vehicles) {
     seen.add(v.tripId)
-    const isTram = v.type === 'tram'
-    const fixedPos = isTram && v.geoPos ? project(v.geoPos[0], v.geoPos[1]) : undefined
+    const isGeo = v.type === 'tram' || v.type === 'bus'
+    const fixedPos = isGeo && v.geoPos ? project(v.geoPos[0], v.geoPos[1]) : undefined
 
     if (vehicleStates.has(v.tripId)) {
       const state = vehicleStates.get(v.tripId)!
@@ -112,9 +112,11 @@ export function setVehicleTargets(svg: SVGSVGElement, vehicles: Vehicle[]): void
       state.el.setAttribute('fill', DELAY_COLORS[v.delayStatus] ?? '#888')
     } else {
       const circle = document.createElementNS(SVG_NS, 'circle')
-      circle.setAttribute('r', isTram ? '4' : '8')
+      const radius = v.type === 'metro' ? '8' : v.type === 'tram' ? '4' : v.type === 'rail' ? '5' : v.type === 'ferry' ? '4' : '3'
+      circle.setAttribute('r', radius)
       circle.setAttribute('fill', DELAY_COLORS[v.delayStatus] ?? '#888')
-      circle.setAttribute('class', `vehicle-marker${isTram ? ' tram-marker' : ''}`)
+      const cls = `vehicle-marker${v.type !== 'metro' ? ` ${v.type}-marker` : ''}`
+      circle.setAttribute('class', cls)
       circle.setAttribute('data-trip-id', v.tripId)
 
       const [x, y] = fixedPos ?? vehiclePosition(v.lineId, v.progress)
