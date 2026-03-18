@@ -3,6 +3,7 @@ import { createMapSVG, setVehicleTargets, startAnimation } from '@/map/renderer'
 import { initGtfsLayer, onStationClick } from '@/map/gtfs-layer'
 import { subscribe, startPolling } from '@/data/store'
 import { fetchDepartures } from '@/data/fetcher'
+import { FetchError } from '@/core/errors'
 import { DeparturePanel } from '@/ui/panel'
 
 const app = document.getElementById('app')!
@@ -53,17 +54,17 @@ svg.addEventListener('click', e => {
 
 // ── Realtime ──────────────────────────────────────────────────────────────────
 
-let firstUpdate = true
+let pollCount = 0
 
 subscribe((vehicles, error) => {
-  if (firstUpdate && (vehicles.length > 0 || error)) {
-    firstUpdate = false
-    loadingOverlay.classList.add('hidden')
-  }
+  if (++pollCount > 1) loadingOverlay.classList.add('hidden')
 
   if (error) {
     statusBar.classList.add('error')
-    statusText.textContent = `Connection error · ${new Date().toLocaleTimeString()}`
+    const qualifier = error instanceof FetchError
+      ? (error.status === 0 ? ' (timeout)' : error.status === 429 ? ' (rate limit)' : error.status >= 500 ? ' (server)' : '')
+      : ''
+    statusText.textContent = `Connection error${qualifier} · ${new Date().toLocaleTimeString()}`
   } else {
     statusBar.classList.remove('error')
     setVehicleTargets(svg, vehicles)

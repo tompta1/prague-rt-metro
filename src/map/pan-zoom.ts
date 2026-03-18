@@ -40,7 +40,7 @@ function svgPoint(svg: SVGSVGElement, clientX: number, clientY: number): [number
   ]
 }
 
-export function initPanZoom(svg: SVGSVGElement): void {
+export function initPanZoom(svg: SVGSVGElement, onZoom?: (vbWidth: number) => void): void {
   let vb: ViewBox = { ...INITIAL }
 
   // ── Wheel zoom ──────────────────────────────────────────────────────────────
@@ -50,6 +50,7 @@ export function initPanZoom(svg: SVGSVGElement): void {
     const factor = e.deltaY < 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR
     vb = zoomAt(vb, mx, my, factor)
     setViewBox(svg, vb)
+    onZoom?.(vb.w)
   }, { passive: false })
 
   // ── Mouse drag pan ──────────────────────────────────────────────────────────
@@ -116,6 +117,10 @@ export function initPanZoom(svg: SVGSVGElement): void {
         const my = (cur[0]!.clientY + cur[1]!.clientY) / 2
         const [svgX, svgY] = svgPoint(svg, mx, my)
         vb = zoomAt(vb, svgX, svgY, prevDist / curDist)
+        setViewBox(svg, vb)
+        onZoom?.(vb.w)
+        lastTouches = cur
+        return
       }
     }
 
